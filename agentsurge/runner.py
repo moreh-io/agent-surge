@@ -1460,9 +1460,19 @@ class BenchmarkRunner:
                     "role": raw_msg.get("role", "assistant"),
                     "content": raw_msg.get("content") or "",
                 }
-                if raw_msg.get("tool_calls"):
-                    assistant_msg["tool_calls"] = raw_msg["tool_calls"]
-                assistant_msg = _ensure_tool_calls(assistant_msg, validation.tool_calls)
+                # Use sanitized tool_calls from validation (not raw_msg)
+                # to avoid forwarding truncated JSON arguments to the next turn.
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": tc.arguments_raw,
+                        },
+                    }
+                    for tc in validation.tool_calls
+                ]
                 new_msgs = await build_tool_response_messages_async(
                     assistant_msg,
                     validation.tool_calls,

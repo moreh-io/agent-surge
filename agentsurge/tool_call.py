@@ -337,6 +337,9 @@ class ToolCallCheck:
     arguments_raw: str = ""
     arguments_parsed: dict | None = None
     errors: list[str] = field(default_factory=list)
+    sanitized: bool = False
+    sanitized_original: str = ""
+    sanitize_error: str = ""
 
 
 @dataclass
@@ -453,8 +456,11 @@ def validate_tool_calls(
                 check.arguments_parsed = parsed
         except (json.JSONDecodeError, TypeError) as e:
             if sanitize_truncated:
+                check.sanitized_original = args_raw  # preserve truncated original
+                check.sanitize_error = str(e)
                 check.arguments_parsed = {}
                 check.arguments_raw = "{}"
+                check.sanitized = True
             else:
                 check.errors.append(f"tool_calls[{i}]: arguments JSON parse error: {e}")
 
@@ -1079,6 +1085,16 @@ def build_tool_response_messages(
     for tc in tool_calls:
         if not tc.valid:
             output = f"[ERROR] Invalid tool call: {'; '.join(tc.errors)}"
+        elif tc.sanitized:
+            truncated_preview = tc.sanitized_original[:500] if tc.sanitized_original else "(empty)"
+            output = (
+                f"[ERROR] Your tool call to '{tc.name}' had truncated/malformed arguments "
+                f"and could not be executed. Parse error: {tc.sanitize_error}\n"
+                f"Your truncated arguments were:\n{truncated_preview}\n\n"
+                f"Please try again. If the arguments are long (e.g. large code blocks "
+                f"in old_str/new_str), try breaking the edit into smaller pieces or "
+                f"use a bash command with sed instead."
+            )
         elif sandbox is not None:
             output = real_execute(tc.name, tc.arguments_parsed, sandbox)
         else:
@@ -1113,6 +1129,16 @@ async def build_tool_response_messages_async(
     for tc in tool_calls:
         if not tc.valid:
             output = f"[ERROR] Invalid tool call: {'; '.join(tc.errors)}"
+        elif tc.sanitized:
+            truncated_preview = tc.sanitized_original[:500] if tc.sanitized_original else "(empty)"
+            output = (
+                f"[ERROR] Your tool call to '{tc.name}' had truncated/malformed arguments "
+                f"and could not be executed. Parse error: {tc.sanitize_error}\n"
+                f"Your truncated arguments were:\n{truncated_preview}\n\n"
+                f"Please try again. If the arguments are long (e.g. large code blocks "
+                f"in old_str/new_str), try breaking the edit into smaller pieces or "
+                f"use a bash command with sed instead."
+            )
         elif sandbox is not None:
             output = await real_execute_async(tc.name, tc.arguments_parsed, sandbox)
         else:
