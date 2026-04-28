@@ -40,3 +40,16 @@ def test_session_result_frontend_metrics():
     d = dataclasses.asdict(s)
     assert d["frontend_metrics"]["provider"] == "echo"
     assert d["frontend_metrics"]["event_count"] == 5
+
+
+def test_run_result_frontend_fields_default_to_none():
+    from agentsurge.types import RunResult
+
+    r = RunResult()
+    assert r.frontend_metrics is None
+    assert r.serving_trace is None
+
+    # And accept assignment:
+    r2 = RunResult()
+    r2.serving_trace = ServingTraceMetrics(available=True, request_count=3)
+    assert r2.serving_trace.available is True
