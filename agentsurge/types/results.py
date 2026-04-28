@@ -808,6 +808,15 @@ class BenchmarkConfig:
     retry_profile: str = "default"
     inflight_dump: bool = False  # --enable-inflight-dump: append one JSONL line per completed turn
 
+    @property
+    def frontend_name(self) -> str:
+        """Frontend name: 'direct' (default) or one of echo/codex/claude/opencode.
+
+        Real selection wiring is added by Task C (FrontendRuntimeSettings).
+        """
+        frontend = getattr(self, "frontend", None)
+        return frontend.name if frontend is not None else "direct"
+
     def __post_init__(self) -> None:
         # Resolve use_model_reply_in_next_turn from tool_mode unless an explicit
         # value was provided. Centralising this here ensures direct construction

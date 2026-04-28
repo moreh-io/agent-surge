@@ -731,6 +731,10 @@ class BenchmarkRunner:
             run_fn = self._run_replay_session
         else:
             run_fn = self._run_session
+        # Frontend dispatch: direct mode uses run_fn above; any other frontend
+        # routes through the frontend execution path. Task D wires real providers.
+        if self.config.frontend_name != "direct":
+            run_fn = self._run_session_frontend
         tasks = [
             asyncio.create_task(run_fn(http, semaphore, session, delays[i], session_index=i))
             for i, session in enumerate(sessions)
@@ -931,6 +935,22 @@ class BenchmarkRunner:
         result.end_time = time.monotonic() - self._run_start
         await invoke_on_session(self._on_session, result)
         return result
+
+    async def _run_session_frontend(
+        self,
+        http: aiohttp.ClientSession | None,
+        semaphore: asyncio.Semaphore,
+        session: ReplaySession,
+        delay: float,
+        session_index: int = 0,
+    ) -> SessionResult:
+        """Frontend-mode session execution.
+
+        Raises NotImplementedError for any frontend other than the (not yet wired)
+        providers. Task D wires echo. The dispatch wiring itself is what we test
+        here.
+        """
+        raise NotImplementedError(f"frontend {self.config.frontend_name!r} not yet wired")
 
     async def _execute_single_tool_turn(
         self,
