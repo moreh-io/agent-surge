@@ -1,0 +1,9 @@
+{
+  "session_id": "oc-001",
+  "messages": [
+    {"role": "user", "content": "hi"},
+    {"role": "assistant", "content": "hello there"}
+  ],
+  "usage": {"input_tokens": 10, "output_tokens": 3},
+  "error": null
+}
