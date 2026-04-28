@@ -3,12 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import Literal, Protocol
 
 from agentsurge.types import ReplaySession
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
@@ -39,7 +36,7 @@ class FrontendEvent:
     kind: str
     text_delta: str = ""
     usage: dict[str, int] | None = None
-    raw: dict | str | None = None
+    raw: dict[str, object] | str | None = None
 
 
 class FrontendProvider(Protocol):

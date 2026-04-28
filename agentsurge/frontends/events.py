@@ -13,8 +13,8 @@ EVENT_PARSER_ERROR = "parser.error"
 EVENT_PARSER_UNKNOWN = "parser.unknown"
 
 
-def event_to_dict(event: FrontendEvent) -> dict:
-    d: dict = {
+def event_to_dict(event: FrontendEvent) -> dict[str, object]:
+    d: dict[str, object] = {
         "ts_monotonic": event.ts_monotonic,
         "kind": event.kind,
         "text_delta": event.text_delta,

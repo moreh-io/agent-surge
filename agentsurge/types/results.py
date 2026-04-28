@@ -522,6 +522,12 @@ class RunResult:
             d[key] = getattr(self, key)
         bm: dict[str, object] = self.backend_metrics
         d["backend_metrics"] = dict(bm)
+        import dataclasses
+
+        d["frontend_metrics"] = self.frontend_metrics
+        d["serving_trace"] = (
+            dataclasses.asdict(self.serving_trace) if self.serving_trace is not None else None
+        )
         return d
 
     _TURN_CSV_COLUMNS = [
@@ -726,6 +732,8 @@ class RunResult:
             and self.isl_total == other.isl_total
             and self.osl_total == other.osl_total
             and self.backend_metrics == other.backend_metrics
+            and self.frontend_metrics == other.frontend_metrics
+            and self.serving_trace == other.serving_trace
         )
 
 

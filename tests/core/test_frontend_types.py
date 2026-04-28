@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 
-from agentsurge.types import FrontendMetrics, ServingTraceMetrics, SessionResult
+from agentsurge.types import FrontendMetrics, RunResult, ServingTraceMetrics, SessionResult
 
 
 def test_frontend_metrics_defaults():
@@ -43,13 +43,26 @@ def test_session_result_frontend_metrics():
 
 
 def test_run_result_frontend_fields_default_to_none():
-    from agentsurge.types import RunResult
-
     r = RunResult()
     assert r.frontend_metrics is None
     assert r.serving_trace is None
 
-    # And accept assignment:
     r2 = RunResult()
     r2.serving_trace = ServingTraceMetrics(available=True, request_count=3)
     assert r2.serving_trace.available is True
+
+
+def test_run_result_to_dict_includes_frontend_fields():
+    """RunResult.to_dict must surface frontend_metrics and serving_trace when set."""
+    st = ServingTraceMetrics(available=True, request_count=7)
+    r = RunResult(serving_trace=st)
+    d = r.to_dict()
+    assert "serving_trace" in d
+    assert d["serving_trace"]["available"] is True
+    assert d["serving_trace"]["request_count"] == 7
+    assert "frontend_metrics" in d
+    assert d["frontend_metrics"] is None
+
+    r_base = RunResult()
+    r_with_trace = RunResult(serving_trace=ServingTraceMetrics(available=True))
+    assert r_base != r_with_trace
