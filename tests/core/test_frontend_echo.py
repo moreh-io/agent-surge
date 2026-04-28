@@ -91,7 +91,9 @@ async def test_frontend_session_renderer_end_to_end(tmp_path: Path):
         vllm_url="http://x",
         model="t",
         no_metrics=True,
-        frontend=FrontendRuntimeSettings(name="echo", session_timeout_s=10.0),
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="always"
+        ),
     )
     renderer = FrontendSessionRenderer(cfg, tmp_path)
     session = _make_session("s_e2e")
@@ -190,6 +192,7 @@ async def test_extra_env_reaches_subprocess(tmp_path: Path):
         frontend=FrontendRuntimeSettings(
             name="echo",
             session_timeout_s=10.0,
+            keep_artifacts="always",
             extra_env=(("AGENTSURGE_TEST_ENV_PROBE", "secret-marker-42"),),
         ),
     )
@@ -264,7 +267,9 @@ async def test_renderer_captures_stderr_only_output(tmp_path: Path, monkeypatch)
         vllm_url="http://x",
         model="t",
         no_metrics=True,
-        frontend=FrontendRuntimeSettings(name="echo", session_timeout_s=10.0),
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="always"
+        ),
     )
     original_build = EchoProvider.build_command
 
@@ -333,6 +338,7 @@ async def test_runner_dispatches_to_echo(tmp_path: Path):
         frontend=FrontendRuntimeSettings(
             name="echo",
             session_timeout_s=10.0,
+            keep_artifacts="always",
             workspace_dir=str(tmp_path / "ws"),
         ),
     )
@@ -355,3 +361,146 @@ async def test_runner_dispatches_to_echo(tmp_path: Path):
     for path in artifact_dirs:
         assert path is not None
         assert (Path(path) / "prompt.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_keep_artifacts_always_retains_on_success(tmp_path: Path):
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="always"
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    result = await renderer.run(_make_session("s_keep_always"))
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.process_exit_code == 0
+    assert fm.failure_category is None
+    session_dir = tmp_path / "s_keep_always"
+    assert session_dir.exists()
+    assert (session_dir / "prompt.md").exists()
+    assert fm.artifact_dir == str(session_dir)
+
+
+@pytest.mark.asyncio
+async def test_keep_artifacts_failed_deletes_on_success(tmp_path: Path):
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="failed"
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    result = await renderer.run(_make_session("s_keep_failed_ok"))
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.process_exit_code == 0
+    assert fm.failure_category is None
+    session_dir = tmp_path / "s_keep_failed_ok"
+    assert not session_dir.exists()
+    assert fm.artifact_dir is None
+
+
+@pytest.mark.asyncio
+async def test_keep_artifacts_failed_retains_on_failure(tmp_path: Path):
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo",
+            command_template="/no/such/binary/agentsurge_test_xyz",
+            session_timeout_s=10.0,
+            keep_artifacts="failed",
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    result = await renderer.run(_make_session("s_keep_failed_fail"))
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.failure_category == "spawn_error"
+    # session_dir is created (mkdir) before the spawn attempt, so it exists
+    # on spawn_error and must be retained when keep_artifacts="failed".
+    session_dir = tmp_path / "s_keep_failed_fail"
+    assert session_dir.exists()
+    assert fm.artifact_dir == str(session_dir)
+
+
+@pytest.mark.asyncio
+async def test_keep_artifacts_never_deletes_on_success(tmp_path: Path):
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="never"
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    result = await renderer.run(_make_session("s_keep_never_ok"))
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.process_exit_code == 0
+    session_dir = tmp_path / "s_keep_never_ok"
+    assert not session_dir.exists()
+    assert fm.artifact_dir is None
+
+
+@pytest.mark.asyncio
+async def test_keep_artifacts_never_deletes_on_failure(tmp_path: Path, monkeypatch):
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="never"
+        ),
+    )
+    original_build = EchoProvider.build_command
+
+    def fail_build(self, artifacts, config):
+        return original_build(self, artifacts, config) + ["--mode", "fail"]
+
+    monkeypatch.setattr(EchoProvider, "build_command", fail_build)
+
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    result = await renderer.run(_make_session("s_keep_never_fail"))
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.process_exit_code == 7
+    assert fm.failure_category == "nonzero_exit"
+    session_dir = tmp_path / "s_keep_never_fail"
+    assert not session_dir.exists()
+    assert fm.artifact_dir is None
+
+
+@pytest.mark.asyncio
+async def test_keep_artifacts_default_is_failed(tmp_path: Path):
+    settings = FrontendRuntimeSettings(name="echo")
+    assert settings.keep_artifacts == "failed"
+
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(name="echo", session_timeout_s=10.0),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    result = await renderer.run(_make_session("s_keep_default"))
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.process_exit_code == 0
+    session_dir = tmp_path / "s_keep_default"
+    assert not session_dir.exists()
+    assert fm.artifact_dir is None

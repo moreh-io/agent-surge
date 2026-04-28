@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shutil
 import signal
 import time
 from pathlib import Path
@@ -62,6 +63,28 @@ class FrontendSessionRenderer:
         if name == "echo":
             return EchoProvider(), EchoEventParser()
         raise NotImplementedError(f"frontend {name!r} not yet wired")
+
+    def _apply_keep_artifacts_policy(self, result: SessionResult, session_dir: Path) -> None:
+        """Honor frontend.keep_artifacts: delete session_dir per policy.
+
+        Mutates result.frontend_metrics.artifact_dir to None when the dir is
+        actually removed, so downstream consumers don't dereference it.
+        """
+        fr = self.config.frontend
+        # Tests may build the renderer without going through the CLI; default
+        # to "always" so direct callers see no surprise deletion.
+        policy = fr.keep_artifacts if fr is not None else "always"
+        fm = result.frontend_metrics
+        if fm is None:
+            return
+        success = fm.process_exit_code == 0 and fm.failure_category is None
+        if policy == "always":
+            return
+        if policy == "failed" and not success:
+            return
+        # policy == "never", or policy == "failed" with success
+        shutil.rmtree(session_dir, ignore_errors=True)
+        fm.artifact_dir = None
 
     async def run(self, session: ReplaySession, *, session_index: int = 0) -> SessionResult:
         name = self.config.frontend_name
@@ -145,7 +168,7 @@ class FrontendSessionRenderer:
                         ttft_ms=0.0,
                         wall_ttft_ms=0.0,
                     )
-                    return SessionResult(
+                    spawn_result = SessionResult(
                         session_id=session.session_id,
                         turns=[turn],
                         total_ms=process_wall_ms,
@@ -160,6 +183,8 @@ class FrontendSessionRenderer:
                             "failed": True,
                         },
                     )
+                    self._apply_keep_artifacts_policy(spawn_result, session_dir)
+                    return spawn_result
             except BaseException:
                 stderr_f.close()
                 raise
@@ -320,7 +345,7 @@ class FrontendSessionRenderer:
             wall_ttft_ms=ttfat_ms or 0.0,
         )
 
-        return SessionResult(
+        result = SessionResult(
             session_id=session.session_id,
             turns=[turn],
             total_ms=process_wall_ms,
@@ -334,3 +359,5 @@ class FrontendSessionRenderer:
                 "artifact_dir": str(session_dir),
             },
         )
+        self._apply_keep_artifacts_policy(result, session_dir)
+        return result
