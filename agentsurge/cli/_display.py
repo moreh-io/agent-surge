@@ -102,6 +102,91 @@ def _classify_failure(error: str) -> str:
     return "error"
 
 
+def _frontend_metrics_list(result: RunResult) -> list:
+    """Return populated FrontendMetrics across sessions, in session order."""
+    return [s.frontend_metrics for s in result.sessions if s.frontend_metrics is not None]
+
+
+def _frontend_provider_summary(metrics: list) -> str:
+    """Render the Provider line: single name, or 'name (count), other (count)'.
+
+    Counts are sorted descending; ties broken by provider name for stability.
+    """
+    counts: dict[str, int] = {}
+    for m in metrics:
+        counts[m.provider] = counts.get(m.provider, 0) + 1
+    if len(counts) == 1:
+        return next(iter(counts))
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(f"{name} ({count})" for name, count in ordered)
+
+
+def _frontend_failure_summary(metrics: list) -> str:
+    """Render the Failures line: '0' or '<count> (cat: n, cat: n, ...)' (top 3)."""
+    counts: dict[str, int] = {}
+    for m in metrics:
+        if m.failure_category:
+            counts[m.failure_category] = counts.get(m.failure_category, 0) + 1
+    total = sum(counts.values())
+    if total == 0:
+        return "0"
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    parts = ", ".join(f"{name}: {count}" for name, count in ordered)
+    return f"{total} ({parts})"
+
+
+def _frontend_pct_row(values: list[float]) -> str:
+    """Format p50/p95/p99 row, or '--' when no samples."""
+    if not values:
+        return "--"
+    p50 = _percentile(values, 50)
+    p95 = _percentile(values, 95)
+    p99 = _percentile(values, 99)
+    return f"p50 {_fmt_ms(p50)}  p95 {_fmt_ms(p95)}  p99 {_fmt_ms(p99)}"
+
+
+def _build_frontend_lines(result: RunResult) -> list[tuple[str, str]]:
+    """Return [(label, value)] pairs for the Frontend Statistics block.
+
+    Returns an empty list when no session has frontend_metrics populated, so
+    callers can skip rendering entirely (preserving direct-mode output).
+    """
+    metrics = _frontend_metrics_list(result)
+    if not metrics:
+        return []
+
+    launched = len(metrics)
+    exited_0 = sum(1 for m in metrics if m.process_exit_code == 0)
+
+    first_event = [
+        m.process_startup_to_first_event_ms
+        for m in metrics
+        if m.process_startup_to_first_event_ms is not None
+    ]
+    final_msg = [
+        m.time_to_final_message_ms for m in metrics if m.time_to_final_message_ms is not None
+    ]
+    wall = [m.process_wall_ms for m in metrics if m.process_wall_ms is not None]
+    streamed = [
+        m.time_to_first_assistant_text_ms
+        for m in metrics
+        if m.streaming_text_available and m.time_to_first_assistant_text_ms is not None
+    ]
+
+    lines: list[tuple[str, str]] = [
+        ("Provider", _frontend_provider_summary(metrics)),
+        ("CLI processes launched", _fmt_int(launched)),
+        ("CLI processes exited 0", _fmt_int(exited_0)),
+        ("Time to first CLI event", _frontend_pct_row(first_event)),
+    ]
+    if streamed:
+        lines.append(("Time to first assistant text", _frontend_pct_row(streamed)))
+    lines.append(("Time to final message", _frontend_pct_row(final_msg)))
+    lines.append(("Process wall time", _frontend_pct_row(wall)))
+    lines.append(("Failures", _frontend_failure_summary(metrics)))
+    return lines
+
+
 def _failure_breakdown(sessions: list) -> dict[str, int]:
     """Count failure reasons across failed sessions."""
     counts: dict[str, int] = {}
@@ -344,8 +429,19 @@ def _print_rich(
         _add_metric(tail, "Prefix cache hit rate", f"{_fmt_pct(prefix_hit)} (per-request)")
     tail.append("\n")
 
+    frontend_lines = _build_frontend_lines(result)
+    panel_parts: list = [body, latency_table, tail]
+    if frontend_lines:
+        frontend_text = Text()
+        frontend_text.append("  ── Frontend statistics ──\n", style="dim")
+        for label, value in frontend_lines:
+            frontend_text.append(f"  {label:<31}", style="cyan")
+            frontend_text.append(f"{value}\n", style="white")
+        frontend_text.append("\n")
+        panel_parts.append(frontend_text)
+
     panel = Panel(
-        Group(body, latency_table, tail),
+        Group(*panel_parts),
         title=title,
         border_style="green",
         padding=(0, 2),
@@ -434,6 +530,12 @@ def _print_plain(
             f"  Time per output token: p50={tpot_p50:.0f}ms p95={tpot_p95:.0f}ms p99={tpot_p99:.0f}ms"
         )
     print(f"  End-to-end latency:   p50={e2e_p50:.0f}ms p95={e2e_p95:.0f}ms p99={e2e_p99:.0f}ms")
+    frontend_lines = _build_frontend_lines(result)
+    if frontend_lines:
+        print("")
+        print("  -- Frontend statistics --")
+        for label, value in frontend_lines:
+            print(f"  {label:<29} {value}")
     if saved_files:
         for path in saved_files:
             print(f"  Saved: {path}")
