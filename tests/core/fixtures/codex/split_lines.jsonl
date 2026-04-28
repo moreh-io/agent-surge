@@ -1,5 +1,0 @@
-{"type":"thread.started","thread_id":"t1"}
-{"type":"turn.started","turn_id":"t1.0"}
-{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}
-{"type":"turn.completed","turn_id":"t1.0"}
-{"type":"usage","usage":{"input_tokens":10,"output_tokens":2}}

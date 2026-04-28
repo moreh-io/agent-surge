@@ -1,8 +1,7 @@
 """Codex CLI provider and JSONL event parser.
 
-The parser is exercised against synthetic fixtures only. Phase 1.5 (real
-codex exec stdout capture) lands separately before this is wired into
-FrontendSessionRenderer."""
+Codex is not yet wired into FrontendSessionRenderer; that requires real
+codex stdout fixtures captured against an installed CLI version."""
 
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
@@ -27,7 +26,7 @@ class CodexProvider:
         supports_custom_base_url=False,
         supports_openai_compatible_endpoint=False,
         model_name_format="codex-model-name",
-        auth_sources=("CODEX_API_KEY", "codex-saved-auth"),
+        auth_sources=("CODEX_API_KEY",),
         config_file_strategy="codex-config",
         proxy_supported=False,
         structured_output_format="jsonl",
@@ -83,21 +82,27 @@ class CodexEventParser:
         self._buffer: str = ""
 
     def feed_stdout_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:
-        if line.endswith("\n"):
-            chunk = line[:-1]
-        else:
-            chunk = line
-        self._buffer += chunk
-        if not self._buffer:
-            return []
-        try:
-            obj = json.loads(self._buffer)
-        except json.JSONDecodeError:
-            return []
-        self._buffer = ""
-        if not isinstance(obj, dict):
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
-        return [self._dispatch(obj, ts_monotonic)]
+        self._buffer += line
+        events: list[FrontendEvent] = []
+        while "\n" in self._buffer:
+            segment, self._buffer = self._buffer.split("\n", 1)
+            segment = segment.rstrip("\r\n")
+            if not segment or not segment.strip():
+                continue
+            try:
+                obj = json.loads(segment)
+            except json.JSONDecodeError:
+                events.append(
+                    FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_ERROR, raw=segment)
+                )
+                continue
+            if not isinstance(obj, dict):
+                events.append(
+                    FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)
+                )
+                continue
+            events.append(self._dispatch(obj, ts_monotonic))
+        return events
 
     def _dispatch(self, obj: dict[str, object], ts_monotonic: float) -> FrontendEvent:
         type_str = obj.get("type")

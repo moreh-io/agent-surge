@@ -71,6 +71,31 @@ def test_parse_partial_line_buffering():
     ]
 
 
+def test_parse_multiple_lines_in_single_call():
+    """A single feed_stdout_line call may contain multiple complete lines."""
+    parser = CodexEventParser()
+    payload = (
+        '{"type":"thread.started","thread_id":"t1"}\n'
+        '{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}\n'
+    )
+    events = parser.feed_stdout_line(payload, ts_monotonic=0.0)
+    assert [e.kind for e in events] == [
+        E.EVENT_SESSION_STARTED,
+        E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
+    ]
+    assert events[1].text_delta == "hello"
+
+
+def test_parse_garbage_line_emits_parser_error_and_recovers():
+    """A complete line that's not JSON emits PARSER_ERROR; subsequent lines parse normally."""
+    parser = CodexEventParser()
+    payload = 'not json at all\n{"type":"thread.started","thread_id":"t1"}\n'
+    events = parser.feed_stdout_line(payload, ts_monotonic=0.0)
+    kinds = [e.kind for e in events]
+    assert E.EVENT_PARSER_ERROR in kinds
+    assert E.EVENT_SESSION_STARTED in kinds
+
+
 def test_parse_unknown_kind():
     parser = CodexEventParser()
     events = parser.feed_stdout_line('{"type":"weird","data":42}\n', _ts())
