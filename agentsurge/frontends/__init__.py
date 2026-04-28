@@ -7,3 +7,5 @@ from agentsurge.frontends.base import (  # noqa: F401
     FrontendProviderCapabilities,
     FrontendRunArtifacts,
 )
+from agentsurge.frontends.echo import EchoEventParser, EchoProvider  # noqa: F401
+from agentsurge.frontends.runner import FrontendSessionRenderer  # noqa: F401

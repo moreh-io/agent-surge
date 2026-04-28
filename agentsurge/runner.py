@@ -23,6 +23,17 @@ _log = logging.getLogger(__name__)
 _tokenizer_cache: dict[tuple[str, bool], object] = {}
 
 
+def _cfg_vars_for_run_result(cfg: Any) -> dict:
+    """Return ``vars(cfg)`` with non-JSON-serializable fields normalized."""
+    import dataclasses as _dc
+
+    d = dict(vars(cfg))
+    fr = d.get("frontend")
+    if fr is not None and _dc.is_dataclass(fr):
+        d["frontend"] = _dc.asdict(fr)
+    return d
+
+
 def _sanitize_tool_schema(tools: list[dict]) -> list[dict]:
     """Strip null values from tool parameter schemas.
 
@@ -655,7 +666,7 @@ class BenchmarkRunner:
             metrics_timeseries=metrics_timeseries,
             external_reuse=residual,
             config={
-                **vars(cfg),
+                **_cfg_vars_for_run_result(cfg),
                 "n_sessions": len(sessions),
                 "env_pythonhashseed": os.environ.get("PYTHONHASHSEED", "not_set"),
             },
@@ -944,13 +955,30 @@ class BenchmarkRunner:
         delay: float,
         session_index: int = 0,
     ) -> SessionResult:
-        """Frontend-mode session execution.
+        """Frontend-mode session execution: spawn provider subprocess and parse events."""
+        from agentsurge.frontends.runner import FrontendSessionRenderer
 
-        Raises NotImplementedError for any frontend other than the (not yet wired)
-        providers. Task D wires echo. The dispatch wiring itself is what we test
-        here.
-        """
-        raise NotImplementedError(f"frontend {self.config.frontend_name!r} not yet wired")
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+        renderer = getattr(self, "_frontend_renderer", None)
+        if renderer is None:
+            fr = self.config.frontend
+            ws = getattr(fr, "workspace_dir", None) if fr is not None else None
+            if ws:
+                workspace_root = Path(ws)
+            else:
+                workspace_root = Path("frontend-runs") / f"run_{int(time.time())}"
+            workspace = workspace_root / "sessions"
+            workspace.mkdir(parents=True, exist_ok=True)
+            renderer = FrontendSessionRenderer(self.config, workspace)
+            self._frontend_renderer = renderer
+            self._frontend_workspace = workspace
+
+        async with semaphore:
+            result = await renderer.run(session, session_index=session_index)
+        await invoke_on_session(self._on_session, result)
+        return result
 
     async def _execute_single_tool_turn(
         self,
