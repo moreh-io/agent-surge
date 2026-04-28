@@ -88,6 +88,31 @@ class TurnResult:
 
 
 @dataclass
+class FrontendMetrics:
+    provider: str
+    process_exit_code: int | None = None
+    process_signal: int | None = None
+    process_wall_ms: float | None = None
+    process_startup_to_first_event_ms: float | None = None
+    streaming_text_available: bool = False
+    time_to_first_assistant_text_ms: float | None = None
+    time_to_final_message_ms: float | None = None
+    frontend_ttft_ms: float | None = None
+    visible_text_tpot_estimate_ms: float | None = None
+    visible_output_tokens_estimate: int | None = None
+    provider_usage: dict[str, int] | None = None
+    event_count: int = 0
+    artifact_dir: str | None = None
+    failure_category: str | None = None
+
+
+@dataclass
+class ServingTraceMetrics:
+    available: bool = False
+    request_count: int = 0
+
+
+@dataclass
 class SessionResult:
     """Result from a complete session.
 
@@ -111,6 +136,7 @@ class SessionResult:
     start_time: float = 0.0  # run-relative seconds (since run start)
     end_time: float = 0.0  # run-relative seconds (since run start)
     metadata: dict = field(default_factory=dict)
+    frontend_metrics: FrontendMetrics | None = None
 
     @property
     def completed(self) -> bool:
@@ -225,6 +251,8 @@ class RunResult:
         "isl_total",
         "osl_total",
         "backend_metrics",
+        "frontend_metrics",
+        "serving_trace",
     )
 
     # RunResult is mutable and defines __eq__: instances are intentionally
@@ -238,6 +266,8 @@ class RunResult:
     isl_total: float
     osl_total: float
     backend_metrics: dict[str, object]
+    frontend_metrics: dict[str, object] | None
+    serving_trace: ServingTraceMetrics | None
 
     def __init__(
         self,
@@ -248,6 +278,8 @@ class RunResult:
         isl_total: float = 0.0,
         osl_total: float = 0.0,
         backend_metrics: dict | None = None,
+        frontend_metrics: dict[str, object] | None = None,
+        serving_trace: ServingTraceMetrics | None = None,
         **kwargs: object,
     ) -> None:
         object.__setattr__(self, "sessions", sessions if sessions is not None else [])
@@ -255,8 +287,9 @@ class RunResult:
         object.__setattr__(self, "config", config if config is not None else {})
         object.__setattr__(self, "isl_total", isl_total)
         object.__setattr__(self, "osl_total", osl_total)
+        object.__setattr__(self, "frontend_metrics", frontend_metrics)
+        object.__setattr__(self, "serving_trace", serving_trace)
         bm: dict = dict(backend_metrics) if backend_metrics else {}
-        # Accept legacy keyword arguments and route them into backend_metrics
         for key, value in kwargs.items():
             if key in _BACKEND_METRIC_KEYS:
                 bm[key] = value
