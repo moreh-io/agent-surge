@@ -202,6 +202,128 @@ async def test_extra_env_reaches_subprocess(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_renderer_handles_missing_binary(tmp_path: Path):
+    """A missing executable surfaces as a categorized failure, not an unhandled exception."""
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo",
+            command_template="/no/such/binary/agentsurge_test_xyz",
+            session_timeout_s=10.0,
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    session = _make_session("s_missing")
+    result = await renderer.run(session)
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.failure_category == "spawn_error"
+    assert fm.process_exit_code is None
+    assert fm.process_signal is None
+    assert result.completed is False
+    assert result.metadata.get("failed") is True
+
+
+@pytest.mark.asyncio
+async def test_renderer_handles_nonzero_quick_exit(tmp_path: Path, monkeypatch):
+    """A subprocess that exits non-zero quickly is categorized as a process failure."""
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(name="echo", session_timeout_s=10.0),
+    )
+    original_build = EchoProvider.build_command
+
+    def fail_build(self, artifacts, config):
+        return original_build(self, artifacts, config) + ["--mode", "fail"]
+
+    monkeypatch.setattr(EchoProvider, "build_command", fail_build)
+
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    session = _make_session("s_fail")
+    result = await renderer.run(session)
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.process_exit_code == 7
+    assert fm.failure_category == "nonzero_exit"
+    assert result.completed is False
+    assert result.turns[0].completed is False
+    # Echo's --mode fail exits before printing any stdout events.
+    assert fm.event_count == 0
+
+
+@pytest.mark.asyncio
+async def test_renderer_captures_stderr_only_output(tmp_path: Path, monkeypatch):
+    """A subprocess that prints to stderr but not stdout still produces parseable artifacts."""
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(name="echo", session_timeout_s=10.0),
+    )
+    original_build = EchoProvider.build_command
+
+    def stderr_build(self, artifacts, config):
+        return original_build(self, artifacts, config) + ["--mode", "stderr-only"]
+
+    monkeypatch.setattr(EchoProvider, "build_command", stderr_build)
+
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    session = _make_session("s_stderr")
+    result = await renderer.run(session)
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    assert fm.process_exit_code == 0
+    assert fm.streaming_text_available is False
+    assert fm.event_count == 0
+    sd = tmp_path / "s_stderr"
+    assert "diagnostic message" in (sd / "stderr.log").read_text()
+
+
+@pytest.mark.asyncio
+async def test_renderer_calls_parser_finish_with_exit_code(tmp_path: Path, monkeypatch):
+    """FrontendSessionRenderer.run must call parser.finish(exit_code, ts) once after subprocess exit."""
+    captured: dict = {}
+
+    class SpyParser(EchoEventParser):
+        def finish(self, exit_code, ts_monotonic):
+            captured["exit_code"] = exit_code
+            captured["ts"] = ts_monotonic
+            captured["calls"] = captured.get("calls", 0) + 1
+            return super().finish(exit_code, ts_monotonic)
+
+    original_resolve = FrontendSessionRenderer._resolve_provider
+
+    def spy_resolve(self, name):
+        provider, _parser = original_resolve(self, name)
+        return provider, SpyParser()
+
+    monkeypatch.setattr(FrontendSessionRenderer, "_resolve_provider", spy_resolve)
+
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(name="echo", session_timeout_s=10.0),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    session = _make_session("s_finish")
+    result = await renderer.run(session)
+
+    assert captured.get("calls") == 1
+    assert captured["exit_code"] == 0
+    assert isinstance(captured["ts"], float)
+    assert result.frontend_metrics is not None
+    assert result.frontend_metrics.process_exit_code == 0
+
+
+@pytest.mark.asyncio
 async def test_runner_dispatches_to_echo(tmp_path: Path):
     cfg = BenchmarkConfig(
         vllm_url="http://x",
