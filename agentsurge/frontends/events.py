@@ -14,6 +14,7 @@ EVENT_PARSER_UNKNOWN = "parser.unknown"
 EVENT_TURN_STARTED = "turn.started"
 EVENT_TURN_COMPLETED = "turn.completed"
 EVENT_ITEM_COMPLETED = "item.completed"
+EVENT_USER_MESSAGE = "user.message"
 EVENT_ERROR = "error"
 
 

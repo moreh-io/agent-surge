@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","cwd":"/tmp","tools":[]}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"there"}}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi there"}]}}
+{"type":"result","subtype":"success","duration_ms":1000,"usage":{"input_tokens":10,"output_tokens":3}}
