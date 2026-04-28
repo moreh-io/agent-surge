@@ -11,6 +11,10 @@ EVENT_USAGE_COMPLETED = "usage.completed"
 EVENT_SESSION_COMPLETED = "session.completed"
 EVENT_PARSER_ERROR = "parser.error"
 EVENT_PARSER_UNKNOWN = "parser.unknown"
+EVENT_TURN_STARTED = "turn.started"
+EVENT_TURN_COMPLETED = "turn.completed"
+EVENT_ITEM_COMPLETED = "item.completed"
+EVENT_ERROR = "error"
 
 
 def event_to_dict(event: FrontendEvent) -> dict[str, object]:
