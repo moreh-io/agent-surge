@@ -7,7 +7,7 @@ Defines ``TurnResult``, ``SessionResult``, ``RunResult``,
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 _log = logging.getLogger(__name__)
 
@@ -737,6 +737,25 @@ class RunResult:
         )
 
 
+@dataclass(frozen=True)
+class FrontendRuntimeSettings:
+    """Runtime settings for a frontend harness (echo/codex/claude/opencode).
+
+    Populated by CLI flags; consumed by the runner's frontend-dispatch path.
+    """
+
+    name: Literal["direct", "echo", "codex", "claude", "opencode"]
+    command_template: str | None = None
+    workspace_dir: str | None = None
+    prompt_mode: Literal["auto", "file", "stdin", "arg"] = "auto"
+    output_format: Literal["auto", "jsonl", "stream-json", "text"] = "auto"
+    model: str | None = None
+    session_timeout_s: float = 7200.0
+    keep_artifacts: Literal["always", "failed", "never"] = "failed"
+    server_url: str | None = None
+    extra_env: tuple[tuple[str, str], ...] = ()
+
+
 @dataclass
 class BenchmarkConfig:
     """All settings for a benchmark run."""
@@ -807,15 +826,12 @@ class BenchmarkConfig:
     stream_idle_timeout: float = 0.0
     retry_profile: str = "default"
     inflight_dump: bool = False  # --enable-inflight-dump: append one JSONL line per completed turn
+    frontend: FrontendRuntimeSettings | None = None
 
     @property
     def frontend_name(self) -> str:
-        """Frontend name: 'direct' (default) or one of echo/codex/claude/opencode.
-
-        Real selection wiring is added by Task C (FrontendRuntimeSettings).
-        """
-        frontend = getattr(self, "frontend", None)
-        return frontend.name if frontend is not None else "direct"
+        """Frontend name: 'direct' (default) or one of echo/codex/claude/opencode."""
+        return self.frontend.name if self.frontend is not None else "direct"
 
     def __post_init__(self) -> None:
         # Resolve use_model_reply_in_next_turn from tool_mode unless an explicit

@@ -20,6 +20,7 @@ from agentsurge.types.results import (  # noqa: F401
     BenchmarkConfig,
     ConfigProfile,
     FrontendMetrics,
+    FrontendRuntimeSettings,
     RunResult,
     ServingTraceMetrics,
     SessionResult,
@@ -51,5 +52,6 @@ __all__ = [
     "ConfigProfile",
     "SloComparisonResult",
     "FrontendMetrics",
+    "FrontendRuntimeSettings",
     "ServingTraceMetrics",
 ]

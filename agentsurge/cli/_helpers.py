@@ -29,7 +29,70 @@ from agentsurge.loaders import get_loader, loader_registry
 from agentsurge.metrics import fetch_metrics
 from agentsurge.preset import LMCACHE_AUTO_PRESETS, preset_to_kwargs, resolve_preset_config
 from agentsurge.runner import BenchmarkConfig
-from agentsurge.types.results import _resolve_use_model_reply
+from agentsurge.types.results import FrontendRuntimeSettings, _resolve_use_model_reply
+
+_FRONTEND_DEFAULTS: dict[str, object] = {
+    "frontend_command_template": None,
+    "frontend_workspace_dir": None,
+    "frontend_prompt_mode": "auto",
+    "frontend_output_format": "auto",
+    "frontend_model": None,
+    "frontend_session_timeout": 7200.0,
+    "frontend_keep_artifacts": "failed",
+    "frontend_server_url": None,
+    "frontend_extra_env": [],
+}
+
+
+def _parse_frontend_extra_env(raw: list[str] | None) -> tuple[tuple[str, str], ...]:
+    """Parse repeated --frontend-extra-env KEY=VALUE entries into a tuple of pairs."""
+    import sys
+
+    items: list[tuple[str, str]] = []
+    for entry in raw or []:
+        if "=" not in entry:
+            print(
+                f"error: --frontend-extra-env expects KEY=VALUE, got {entry!r}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        key, value = entry.split("=", 1)
+        if not key:
+            print(
+                f"error: --frontend-extra-env expects KEY=VALUE, got {entry!r}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        items.append((key, value))
+    return tuple(items)
+
+
+def _build_frontend_settings(args: argparse.Namespace) -> FrontendRuntimeSettings | None:
+    """Build FrontendRuntimeSettings from parsed CLI args, or None when unused.
+
+    Returns None when ``--frontend direct`` is selected and no other
+    ``--frontend-*`` flag was passed, so direct-mode runs leave
+    ``BenchmarkConfig.frontend`` unset.
+    """
+    name = getattr(args, "frontend", "direct") or "direct"
+    custom = any(
+        getattr(args, attr, default) != default for attr, default in _FRONTEND_DEFAULTS.items()
+    )
+    if name == "direct" and not custom:
+        return None
+    return FrontendRuntimeSettings(
+        name=name,  # type: ignore[arg-type]
+        command_template=getattr(args, "frontend_command_template", None),
+        workspace_dir=getattr(args, "frontend_workspace_dir", None),
+        prompt_mode=getattr(args, "frontend_prompt_mode", "auto"),
+        output_format=getattr(args, "frontend_output_format", "auto"),
+        model=getattr(args, "frontend_model", None),
+        session_timeout_s=float(getattr(args, "frontend_session_timeout", 7200.0)),
+        keep_artifacts=getattr(args, "frontend_keep_artifacts", "failed"),
+        server_url=getattr(args, "frontend_server_url", None),
+        extra_env=_parse_frontend_extra_env(getattr(args, "frontend_extra_env", None)),
+    )
+
 
 _log = logging.getLogger(__name__)
 
@@ -328,7 +391,9 @@ def _build_runner_config(
     if overrides:
         kwargs.update({k: v for k, v in overrides.items() if v is not None})
 
-    return BenchmarkConfig(**kwargs)
+    config = BenchmarkConfig(**kwargs)
+    config.frontend = _build_frontend_settings(args)
+    return config
 
 
 def _collision_suffix() -> str:

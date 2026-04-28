@@ -296,6 +296,77 @@ def _run_args() -> argparse.ArgumentParser:
         "'true': inject actual model output into the next turn. "
         "'false': replay the recorded assistant message.",
     )
+    p.add_argument(
+        "--frontend",
+        choices=["direct", "echo", "codex", "claude", "opencode"],
+        default="direct",
+        dest="frontend",
+        help="Frontend harness driving each session (default: direct = in-process API client).",
+    )
+    p.add_argument(
+        "--frontend-command-template",
+        type=str,
+        default=None,
+        dest="frontend_command_template",
+        help="Override command template used to spawn the frontend process.",
+    )
+    p.add_argument(
+        "--frontend-workspace-dir",
+        type=str,
+        default=None,
+        dest="frontend_workspace_dir",
+        help="Per-session workspace root for frontend processes (one subdir per session).",
+    )
+    p.add_argument(
+        "--frontend-prompt-mode",
+        choices=["auto", "file", "stdin", "arg"],
+        default="auto",
+        dest="frontend_prompt_mode",
+        help="How the prompt is delivered to the frontend process (default: auto).",
+    )
+    p.add_argument(
+        "--frontend-output-format",
+        choices=["auto", "jsonl", "stream-json", "text"],
+        default="auto",
+        dest="frontend_output_format",
+        help="Expected stdout format from the frontend process (default: auto-detect).",
+    )
+    p.add_argument(
+        "--frontend-model",
+        type=str,
+        default=None,
+        dest="frontend_model",
+        help="Model name passed through to the frontend process (overrides --model for the harness).",
+    )
+    p.add_argument(
+        "--frontend-session-timeout",
+        type=float,
+        default=7200.0,
+        dest="frontend_session_timeout",
+        help="Per-session wall-clock timeout (seconds) for the frontend process (default: 7200).",
+    )
+    p.add_argument(
+        "--frontend-keep-artifacts",
+        choices=["always", "failed", "never"],
+        default="failed",
+        dest="frontend_keep_artifacts",
+        help="When to retain per-session frontend artifacts (default: failed).",
+    )
+    p.add_argument(
+        "--frontend-server-url",
+        type=str,
+        default=None,
+        dest="frontend_server_url",
+        help="Server URL the frontend should target (overrides --vllm-url for the harness).",
+    )
+    p.add_argument(
+        "--frontend-extra-env",
+        action="append",
+        default=[],
+        dest="frontend_extra_env",
+        metavar="KEY=VALUE",
+        help="Extra environment variable for the frontend process; repeat for multiple.",
+    )
     return p
 
 
