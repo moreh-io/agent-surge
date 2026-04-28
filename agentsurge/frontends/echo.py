@@ -23,6 +23,11 @@ a = p.parse_args()
 open(a.prompt_path, "r", encoding="utf-8").read()
 if a.mode == "slow":
     time.sleep(60)
+if a.mode == "fail":
+    sys.exit(7)
+if a.mode == "stderr-only":
+    sys.stderr.write("diagnostic message\n"); sys.stderr.flush()
+    sys.exit(0)
 def emit(o):
     sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
 _probe = os.environ.get("AGENTSURGE_TEST_ENV_PROBE")

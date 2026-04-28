@@ -98,14 +98,68 @@ class FrontendSessionRenderer:
             stderr_f = artifacts.stderr_path.open("wb")
             try:
                 process_spawn_t0 = time.monotonic()
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(session_dir),
-                    env=subprocess_env,
-                    preexec_fn=os.setsid,
-                )
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=str(session_dir),
+                        env=subprocess_env,
+                        preexec_fn=os.setsid,
+                    )
+                except (FileNotFoundError, PermissionError) as exc:
+                    # Spawn failed before we have a process; surface as a
+                    # categorized failure rather than letting the caller see
+                    # an unhandled OSError. Keep the message in stderr.log so
+                    # operators can diagnose without relying on logs.
+                    stderr_f.write(f"spawn_error: {exc}\n".encode())
+                    stderr_f.flush()
+                    stderr_f.close()
+                    stdout_f.close()
+                    process_exit_t = time.monotonic()
+                    process_wall_ms = (process_exit_t - process_spawn_t0) * 1000.0
+                    fm = FrontendMetrics(
+                        provider=name,
+                        process_exit_code=None,
+                        process_signal=None,
+                        process_wall_ms=process_wall_ms,
+                        process_startup_to_first_event_ms=None,
+                        streaming_text_available=False,
+                        time_to_first_assistant_text_ms=None,
+                        time_to_final_message_ms=None,
+                        frontend_ttft_ms=None,
+                        visible_text_tpot_estimate_ms=None,
+                        visible_output_tokens_estimate=None,
+                        provider_usage=None,
+                        event_count=0,
+                        artifact_dir=str(session_dir),
+                        failure_category="spawn_error",
+                    )
+                    turn = TurnResult(
+                        session_id=session.session_id,
+                        turn_index=0,
+                        completed=False,
+                        total_ms=process_wall_ms,
+                        output_tokens=0,
+                        input_tokens=0,
+                        ttft_ms=0.0,
+                        wall_ttft_ms=0.0,
+                    )
+                    return SessionResult(
+                        session_id=session.session_id,
+                        turns=[turn],
+                        total_ms=process_wall_ms,
+                        expected_turns=1,
+                        start_time=0.0,
+                        end_time=(process_exit_t - process_spawn_t0),
+                        frontend_metrics=fm,
+                        metadata={
+                            **dict(session.metadata),
+                            "frontend": name,
+                            "artifact_dir": str(session_dir),
+                            "failed": True,
+                        },
+                    )
             except BaseException:
                 stderr_f.close()
                 raise
@@ -184,6 +238,18 @@ class FrontendSessionRenderer:
         process_signal: int | None = None
         if returncode is not None and returncode < 0:
             process_signal = -returncode
+
+        # Drain any parser-buffered state. Parsers may emit terminal events
+        # here (e.g. codex's truncated-line EVENT_PARSER_ERROR); count them
+        # in event_count so the metric reflects everything observed.
+        finish_events = parser.finish(returncode if returncode is not None else 0, process_exit_t)
+        for ev in finish_events:
+            event_count += 1
+            if first_event_t is None:
+                first_event_t = ev.ts_monotonic
+
+        if failure_category is None and returncode is not None and returncode != 0:
+            failure_category = "nonzero_exit"
 
         process_wall_ms = (process_exit_t - process_spawn_t0) * 1000.0
 
