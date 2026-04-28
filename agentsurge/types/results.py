@@ -5,6 +5,7 @@ Defines ``TurnResult``, ``SessionResult``, ``RunResult``,
 ``BenchmarkConfig``, ``ConfigProfile``, and ``SloComparisonResult``.
 """
 
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -832,6 +833,23 @@ class BenchmarkConfig:
     def frontend_name(self) -> str:
         """Frontend name: 'direct' (default) or one of echo/codex/claude/opencode."""
         return self.frontend.name if self.frontend is not None else "direct"
+
+    def to_run_result_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable view of this BenchmarkConfig.
+
+        Used by RunResult to embed run configuration. Dataclass-typed fields
+        (e.g., FrontendRuntimeSettings) are converted via dataclasses.asdict;
+        tuples become lists so json.dumps handles them.
+        """
+
+        def _norm(value: object) -> object:
+            if dataclasses.is_dataclass(value) and not isinstance(value, type):
+                return dataclasses.asdict(value)
+            if isinstance(value, tuple):
+                return [_norm(item) for item in value]
+            return value
+
+        return {key: _norm(val) for key, val in vars(self).items()}
 
     def __post_init__(self) -> None:
         # Resolve use_model_reply_in_next_turn from tool_mode unless an explicit

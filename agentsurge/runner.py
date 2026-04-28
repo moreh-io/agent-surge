@@ -23,17 +23,6 @@ _log = logging.getLogger(__name__)
 _tokenizer_cache: dict[tuple[str, bool], object] = {}
 
 
-def _cfg_vars_for_run_result(cfg: Any) -> dict:
-    """Return ``vars(cfg)`` with non-JSON-serializable fields normalized."""
-    import dataclasses as _dc
-
-    d = dict(vars(cfg))
-    fr = d.get("frontend")
-    if fr is not None and _dc.is_dataclass(fr):
-        d["frontend"] = _dc.asdict(fr)
-    return d
-
-
 def _sanitize_tool_schema(tools: list[dict]) -> list[dict]:
     """Strip null values from tool parameter schemas.
 
@@ -666,7 +655,7 @@ class BenchmarkRunner:
             metrics_timeseries=metrics_timeseries,
             external_reuse=residual,
             config={
-                **_cfg_vars_for_run_result(cfg),
+                **cfg.to_run_result_dict(),
                 "n_sessions": len(sessions),
                 "env_pythonhashseed": os.environ.get("PYTHONHASHSEED", "not_set"),
             },
@@ -964,11 +953,13 @@ class BenchmarkRunner:
         renderer = getattr(self, "_frontend_renderer", None)
         if renderer is None:
             fr = self.config.frontend
-            ws = getattr(fr, "workspace_dir", None) if fr is not None else None
+            ws = fr.workspace_dir if fr is not None else None
             if ws:
                 workspace_root = Path(ws)
             else:
-                workspace_root = Path("frontend-runs") / f"run_{int(time.time())}"
+                workspace_root = (
+                    Path("frontend-runs") / f"run_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+                )
             workspace = workspace_root / "sessions"
             workspace.mkdir(parents=True, exist_ok=True)
             renderer = FrontendSessionRenderer(self.config, workspace)

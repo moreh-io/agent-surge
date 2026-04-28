@@ -7,12 +7,17 @@ and _run_session_frontend based on BenchmarkConfig.frontend_name.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from agentsurge import BenchmarkConfig, ReplaySession
 from agentsurge.runner import BenchmarkRunner
 from agentsurge.types import SessionResult
+from agentsurge.types.results import FrontendRuntimeSettings
+
+# "codex" is a legal value for FrontendRuntimeSettings.name but is not yet wired
+# in _resolve_provider, so it falls through to NotImplementedError — exactly
+# what these dispatch tests need to exercise the unwired-frontend code path.
+_UNWIRED = FrontendRuntimeSettings(name="codex")
 
 
 def _make_session(sid: str = "s1") -> ReplaySession:
@@ -29,8 +34,8 @@ def test_default_frontend_name_is_direct():
 
 def test_frontend_name_reads_frontend_attr():
     cfg = BenchmarkConfig(vllm_url="http://x", model="t")
-    cfg.frontend = SimpleNamespace(name="echo_unwired")
-    assert cfg.frontend_name == "echo_unwired"
+    cfg.frontend = _UNWIRED
+    assert cfg.frontend_name == "codex"
 
 
 def test_dispatch_direct_invokes_run_session_only():
@@ -64,7 +69,7 @@ def test_dispatch_direct_invokes_run_session_only():
 def test_dispatch_frontend_invokes_frontend_path():
     """When frontend_name != 'direct', dispatch must route through _run_session_frontend."""
     cfg = BenchmarkConfig(vllm_url="http://x", model="t", no_metrics=True)
-    cfg.frontend = SimpleNamespace(name="echo_unwired")
+    cfg.frontend = _UNWIRED
     runner = BenchmarkRunner(cfg)
 
     direct_calls: list[str] = []
@@ -94,7 +99,7 @@ def test_unwired_frontend_records_failure_in_session_result():
     """A NotImplementedError raised by _run_session_frontend must surface as
     a failed SessionResult with metadata['failed']=True (existing capture pattern)."""
     cfg = BenchmarkConfig(vllm_url="http://x", model="t", no_metrics=True)
-    cfg.frontend = SimpleNamespace(name="echo_unwired")
+    cfg.frontend = _UNWIRED
     runner = BenchmarkRunner(cfg)
 
     session = _make_session("s_fail")
@@ -107,4 +112,4 @@ def test_unwired_frontend_records_failure_in_session_result():
     assert failed.metadata.get("failed") is True
     err = failed.metadata.get("error", "")
     assert "NotImplementedError" in err
-    assert "echo_unwired" in err
+    assert "codex" in err

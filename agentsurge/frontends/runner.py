@@ -93,16 +93,23 @@ class FrontendSessionRenderer:
         failure_category: str | None = None
 
         stdout_f = artifacts.stdout_path.open("wb")
-        stderr_f = artifacts.stderr_path.open("wb")
-
-        process_spawn_t0 = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(session_dir),
-            preexec_fn=os.setsid,
-        )
+        try:
+            stderr_f = artifacts.stderr_path.open("wb")
+            try:
+                process_spawn_t0 = time.monotonic()
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(session_dir),
+                    preexec_fn=os.setsid,
+                )
+            except BaseException:
+                stderr_f.close()
+                raise
+        except BaseException:
+            stdout_f.close()
+            raise
 
         async def _consume_stdout() -> None:
             nonlocal first_event_t, first_assistant_text_t, last_assistant_text_t
