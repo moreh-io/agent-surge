@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019dd669-c394-7432-beac-596e0c316cfb"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I will not call any tools."}}
+{"type":"turn.completed","usage":{"input_tokens":12804,"cached_input_tokens":10624,"output_tokens":11,"reasoning_output_tokens":0}}

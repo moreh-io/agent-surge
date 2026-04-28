@@ -101,43 +101,70 @@ class CodexEventParser:
                     FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)
                 )
                 continue
-            events.append(self._dispatch(obj, ts_monotonic))
+            events.extend(self._dispatch(obj, ts_monotonic))
         return events
 
-    def _dispatch(self, obj: dict[str, object], ts_monotonic: float) -> FrontendEvent:
+    def _dispatch(self, obj: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
         type_str = obj.get("type")
         if type_str == "thread.started":
-            return FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_STARTED, raw=obj)
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_STARTED, raw=obj)]
         if type_str == "turn.started":
-            return FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_STARTED, raw=obj)
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_STARTED, raw=obj)]
         if type_str == "turn.completed":
-            return FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_COMPLETED, raw=obj)
+            out: list[FrontendEvent] = [
+                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_COMPLETED, raw=obj)
+            ]
+            # Codex >=0.125.0 carries usage inline on turn.completed; older/synthetic
+            # shape emits a separate {"type":"usage",...} event handled below. Support both.
+            usage_raw = obj.get("usage")
+            if isinstance(usage_raw, dict):
+                usage = {k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))}
+                out.append(
+                    FrontendEvent(
+                        ts_monotonic=ts_monotonic,
+                        kind=E.EVENT_USAGE_COMPLETED,
+                        usage=usage,
+                        raw=obj,
+                    )
+                )
+            return out
+        if type_str == "turn.failed":
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_FAILED, raw=obj)]
         if type_str == "item.completed":
             item = obj.get("item")
             if isinstance(item, dict) and item.get("type") == "agent_message":
                 text = item.get("text", "")
                 text_delta = text if isinstance(text, str) else ""
-                return FrontendEvent(
-                    ts_monotonic=ts_monotonic,
-                    kind=E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
-                    text_delta=text_delta,
-                    raw=obj,
-                )
-            return FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ITEM_COMPLETED, raw=obj)
+                return [
+                    FrontendEvent(
+                        ts_monotonic=ts_monotonic,
+                        kind=E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
+                        text_delta=text_delta,
+                        raw=obj,
+                    )
+                ]
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ITEM_COMPLETED, raw=obj)]
         if type_str == "usage":
             usage_raw = obj.get("usage")
-            usage: dict[str, int] | None = None
+            standalone_usage: dict[str, int] | None = None
             if isinstance(usage_raw, dict):
-                usage = {k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))}
-            return FrontendEvent(
-                ts_monotonic=ts_monotonic,
-                kind=E.EVENT_USAGE_COMPLETED,
-                usage=usage,
-                raw=obj,
-            )
+                standalone_usage = {
+                    k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))
+                }
+            return [
+                FrontendEvent(
+                    ts_monotonic=ts_monotonic,
+                    kind=E.EVENT_USAGE_COMPLETED,
+                    usage=standalone_usage,
+                    raw=obj,
+                )
+            ]
         if type_str == "error":
-            return FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=obj)
-        return FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)
+            # Codex 0.125.0: obj["message"] is an escaped JSON string with shape
+            # {"type":"error","status":N,"error":{"type":"...","message":"..."}}.
+            # Pass through verbatim; downstream consumers parse if needed.
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=obj)]
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
 
     def feed_stderr_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:
         return []

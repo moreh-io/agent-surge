@@ -1,0 +1,3 @@
+WARNING: failed to clean up stale arg0 temp dirs: Directory not empty (os error 39)
+Reading additional input from stdin...
+2026-04-28T23:26:31.697798Z ERROR codex_core::session: failed to record rollout items: thread 019dd669-c394-7432-beac-596e0c316cfb not found

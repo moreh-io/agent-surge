@@ -117,6 +117,56 @@ def test_parse_truncated_final_line():
     assert "thread.start" in raw
 
 
+def test_parse_real_simple_session_v0_125_0():
+    """Real codex 0.125.0 success-path fixture parses cleanly with inline usage on turn.completed."""
+    fixture = Path(__file__).parent / "fixtures" / "codex" / "real_simple_session_v0.125.0.jsonl"
+    parser = CodexEventParser()
+    events = []
+    for line in fixture.read_text().splitlines():
+        events.extend(parser.feed_stdout_line(line + "\n", ts_monotonic=0.0))
+    events.extend(parser.finish(0, 0.0))
+
+    kinds = [e.kind for e in events]
+    # Real CLI emits: thread.started, turn.started, item.completed (agent_message),
+    # turn.completed (with inline usage -> emits both turn.completed AND usage events)
+    assert kinds == [
+        E.EVENT_SESSION_STARTED,
+        E.EVENT_TURN_STARTED,
+        E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
+        E.EVENT_TURN_COMPLETED,
+        E.EVENT_USAGE_COMPLETED,
+    ]
+    # assistant text
+    assert events[2].text_delta == "I will not call any tools."
+    # usage carries the full token shape including cached_input_tokens and reasoning_output_tokens
+    usage_event = events[4]
+    assert usage_event.usage["input_tokens"] == 12804
+    assert usage_event.usage["cached_input_tokens"] == 10624
+    assert usage_event.usage["output_tokens"] == 11
+    assert usage_event.usage["reasoning_output_tokens"] == 0
+
+
+def test_parse_real_error_session_v0_125_0():
+    """Real codex 0.125.0 error-path fixture parses cleanly: error + turn.failed both surface."""
+    fixture = Path(__file__).parent / "fixtures" / "codex" / "real_error_session_v0.125.0.jsonl"
+    parser = CodexEventParser()
+    events = []
+    for line in fixture.read_text().splitlines():
+        events.extend(parser.feed_stdout_line(line + "\n", ts_monotonic=0.0))
+    events.extend(parser.finish(1, 0.0))
+
+    kinds = [e.kind for e in events]
+    assert kinds == [
+        E.EVENT_SESSION_STARTED,
+        E.EVENT_TURN_STARTED,
+        E.EVENT_ERROR,
+        E.EVENT_TURN_FAILED,
+    ]
+    # error message is escaped JSON; parser preserves verbatim
+    error_event = events[2]
+    assert "NO_SUCH_MODEL_xyz" in error_event.raw.get("message", "")
+
+
 def _make_artifacts(tmp_path: Path) -> FrontendRunArtifacts:
     session_dir = tmp_path / "s0"
     session_dir.mkdir(parents=True, exist_ok=True)

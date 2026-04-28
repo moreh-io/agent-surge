@@ -1,0 +1,21 @@
+{
+  "cli_name": "codex-cli",
+  "cli_version": "0.125.0",
+  "capture_date": "2026-04-28",
+  "captures": [
+    {
+      "name": "simple_session",
+      "command": "codex exec --json --cd <repo> --output-last-message <path> \"Print exactly one short sentence. Do not call any tools.\"",
+      "exit_code": 0,
+      "stdout_lines": 4,
+      "notes": "Success path. usage carried inline on turn.completed."
+    },
+    {
+      "name": "error_session",
+      "command": "codex exec --json --cd <repo> --model NO_SUCH_MODEL_xyz \"x\"",
+      "exit_code": 1,
+      "stdout_lines": 4,
+      "notes": "400 invalid_request_error path. Emits both 'error' and 'turn.failed'."
+    }
+  ]
+}
