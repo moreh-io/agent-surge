@@ -51,6 +51,11 @@ def test_run_result_frontend_fields_default_to_none():
     r2.serving_trace = ServingTraceMetrics(available=True, request_count=3)
     assert r2.serving_trace.available is True
 
+    # Positive case: a constructor that hardcoded `None` for frontend_metrics
+    # would silently pass the `is None` assertions above.
+    r3 = RunResult(frontend_metrics={"provider": "echo"})
+    assert r3.frontend_metrics == {"provider": "echo"}
+
 
 def test_run_result_to_dict_includes_frontend_fields():
     """RunResult.to_dict must surface frontend_metrics and serving_trace when set."""
@@ -63,6 +68,14 @@ def test_run_result_to_dict_includes_frontend_fields():
     assert "frontend_metrics" in d
     assert d["frontend_metrics"] is None
 
+    r2 = RunResult(frontend_metrics={"provider": "echo", "event_count": 3})
+    d2 = r2.to_dict()
+    assert d2["frontend_metrics"] == {"provider": "echo", "event_count": 3}
+
     r_base = RunResult()
     r_with_trace = RunResult(serving_trace=ServingTraceMetrics(available=True))
     assert r_base != r_with_trace
+
+    ra = RunResult(frontend_metrics={"x": 1})
+    rb = RunResult(frontend_metrics={"x": 2})
+    assert ra != rb

@@ -77,7 +77,9 @@ def test_extra_env_malformed_exits_2(capsys):
         _build_cfg(args)
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "frontend-extra-env" in err or "KEY=VALUE" in err
+    assert "KEY=VALUE" in err
+    # Offending value is echoed back via repr() so users can see what we rejected.
+    assert "'A'" in err
 
 
 def test_unknown_frontend_choice_exits_2(capsys):
@@ -85,7 +87,8 @@ def test_unknown_frontend_choice_exits_2(capsys):
         _parse_run(["--backend", "mock", "--frontend", "bogus"])
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "frontend" in err.lower()
+    assert "bogus" in err
+    assert "invalid choice" in err.lower()
 
 
 def test_frontend_codex_round_trips_through_frontend_name():

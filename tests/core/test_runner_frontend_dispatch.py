@@ -66,6 +66,41 @@ def test_dispatch_direct_invokes_run_session_only():
     assert len(results) == 2
 
 
+def test_dispatch_tool_mode_real_with_direct_frontend_uses_tool_session():
+    """tool_mode='real' + frontend='direct' must route through _run_tool_session,
+    not the frontend path. Frontend dispatch must not override tool-mode dispatch
+    when the user explicitly stays on the direct frontend.
+    """
+    cfg = BenchmarkConfig(vllm_url="http://x", model="t", no_metrics=True, tool_mode="real")
+    runner = BenchmarkRunner(cfg)
+
+    direct_calls: list[str] = []
+    tool_calls: list[str] = []
+    frontend_calls: list[str] = []
+
+    async def fake_direct(http, semaphore, session, delay, session_index=0):
+        direct_calls.append(session.session_id)
+        return SessionResult(session_id=session.session_id, completed=True)
+
+    async def fake_tool(http, semaphore, session, delay, session_index=0):
+        tool_calls.append(session.session_id)
+        return SessionResult(session_id=session.session_id, completed=True)
+
+    async def fake_frontend(http, semaphore, session, delay, session_index=0):
+        frontend_calls.append(session.session_id)
+        return SessionResult(session_id=session.session_id, completed=True)
+
+    runner._run_session = fake_direct  # type: ignore[method-assign]
+    runner._run_tool_session = fake_tool  # type: ignore[method-assign]
+    runner._run_session_frontend = fake_frontend  # type: ignore[method-assign]
+
+    sessions = [_make_session("s1")]
+    asyncio.run(runner._dispatch_sessions(MagicMock(), asyncio.Semaphore(10), sessions, [0.0]))
+    assert tool_calls == ["s1"]
+    assert direct_calls == []
+    assert frontend_calls == []
+
+
 def test_dispatch_frontend_invokes_frontend_path():
     """When frontend_name != 'direct', dispatch must route through _run_session_frontend."""
     cfg = BenchmarkConfig(vllm_url="http://x", model="t", no_metrics=True)

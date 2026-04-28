@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import signal
 import time
 from pathlib import Path
 
@@ -108,12 +110,41 @@ async def test_frontend_session_renderer_end_to_end(tmp_path: Path):
     assert fm.time_to_first_assistant_text_ms < fm.time_to_final_message_ms
     assert fm.visible_output_tokens_estimate == 3
     assert fm.provider_usage == {"input_tokens": 10, "output_tokens": 5}
+    assert fm.process_wall_ms is not None and fm.process_wall_ms > 0
 
     sd = tmp_path / "s_e2e"
     assert (sd / "prompt.md").exists()
     assert (sd / "session.json").exists()
     assert (sd / "stdout.jsonl").exists()
     assert (sd / "stderr.log").exists()
+
+    # The raw stdout.jsonl emits provider-specific "type" strings; map to
+    # canonical kinds and assert the full ordered sequence.
+    type_to_kind = {
+        "session.started": E.EVENT_SESSION_STARTED,
+        "cli.process.started": E.EVENT_CLI_PROCESS_STARTED,
+        "assistant.text.delta": E.EVENT_ASSISTANT_TEXT_DELTA,
+        "assistant.message.completed": E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
+        "usage.completed": E.EVENT_USAGE_COMPLETED,
+        "session.completed": E.EVENT_SESSION_COMPLETED,
+    }
+    raw_kinds: list[str] = []
+    for line in (sd / "stdout.jsonl").read_text().splitlines():
+        if not line.strip():
+            continue
+        obj = json.loads(line)
+        raw_kinds.append(type_to_kind[obj["type"]])
+    assert raw_kinds == [
+        E.EVENT_SESSION_STARTED,
+        E.EVENT_CLI_PROCESS_STARTED,
+        E.EVENT_ASSISTANT_TEXT_DELTA,
+        E.EVENT_ASSISTANT_TEXT_DELTA,
+        E.EVENT_ASSISTANT_TEXT_DELTA,
+        E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
+        E.EVENT_USAGE_COMPLETED,
+        E.EVENT_SESSION_COMPLETED,
+    ]
+    assert "hi" in (sd / "prompt.md").read_text()
 
 
 @pytest.mark.asyncio
@@ -139,13 +170,14 @@ async def test_frontend_session_renderer_timeout(tmp_path: Path, monkeypatch):
     result = await renderer.run(session)
     elapsed = time.monotonic() - t0
 
+    # Renderer waits 0.5s after SIGTERM before SIGKILL, then up to 2s for wait,
+    # so 3.0s is the safe ceiling on shared CI; tightening below would flake.
     assert elapsed < 3.0
     fm = result.frontend_metrics
     assert fm is not None
     assert fm.failure_category == "timeout"
-    rc = fm.process_exit_code
-    sig = fm.process_signal
-    assert rc != 0 or sig is not None
+    # Process must actually have died via signal (negative returncode → signal).
+    assert fm.process_signal in (signal.SIGTERM.value, signal.SIGKILL.value)
 
 
 @pytest.mark.asyncio
@@ -172,3 +204,11 @@ async def test_runner_dispatches_to_echo(tmp_path: Path):
         assert r.frontend_metrics is not None
         assert r.frontend_metrics.process_exit_code == 0
         assert r.frontend_metrics.streaming_text_available is True
+
+    # Each session must have a distinct artifact dir; collapsing both to the
+    # same dir would clobber prompt/stdout files but still pass the loop above.
+    artifact_dirs = {r.frontend_metrics.artifact_dir for r in results}
+    assert len(artifact_dirs) == 2
+    for path in artifact_dirs:
+        assert path is not None
+        assert (Path(path) / "prompt.md").exists()

@@ -92,8 +92,8 @@ def test_parse_garbage_line_emits_parser_error_and_recovers():
     payload = 'not json at all\n{"type":"thread.started","thread_id":"t1"}\n'
     events = parser.feed_stdout_line(payload, ts_monotonic=0.0)
     kinds = [e.kind for e in events]
-    assert E.EVENT_PARSER_ERROR in kinds
-    assert E.EVENT_SESSION_STARTED in kinds
+    # Order matters: recovery must happen AFTER the error, not before it.
+    assert kinds == [E.EVENT_PARSER_ERROR, E.EVENT_SESSION_STARTED]
 
 
 def test_parse_unknown_kind():
@@ -147,23 +147,39 @@ def test_codex_provider_build_command_default(tmp_path: Path):
     artifacts = _make_artifacts(tmp_path)
     config = _make_config("gpt-5.2-codex")
     cmd = CodexProvider().build_command(artifacts, config)
-    assert cmd[0] == "codex"
-    for needle in (
+    workspace = str(artifacts.session_dir)
+    final_message = str(artifacts.session_dir / "final.txt")
+    prompt_path = str(artifacts.prompt_path)
+    assert cmd == [
+        "codex",
+        "exec",
         "--json",
         "--ephemeral",
         "--cd",
+        workspace,
         "--model",
         "gpt-5.2-codex",
         "--output-last-message",
-    ):
-        assert needle in cmd
-    assert any(str(artifacts.prompt_path) in part for part in cmd)
+        final_message,
+        f"Read {prompt_path} and complete the AgentSurge session described there.",
+    ]
 
 
 def test_codex_provider_build_command_no_model(tmp_path: Path):
     artifacts = _make_artifacts(tmp_path)
     config = _make_config(None)
     cmd = CodexProvider().build_command(artifacts, config)
-    assert "--model" not in cmd
-    assert cmd[0] == "codex"
-    assert "--ephemeral" in cmd
+    workspace = str(artifacts.session_dir)
+    final_message = str(artifacts.session_dir / "final.txt")
+    prompt_path = str(artifacts.prompt_path)
+    assert cmd == [
+        "codex",
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--cd",
+        workspace,
+        "--output-last-message",
+        final_message,
+        f"Read {prompt_path} and complete the AgentSurge session described there.",
+    ]
