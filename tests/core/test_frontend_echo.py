@@ -181,6 +181,27 @@ async def test_frontend_session_renderer_timeout(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_extra_env_reaches_subprocess(tmp_path: Path):
+    """FrontendRuntimeSettings.extra_env must propagate into the subprocess."""
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo",
+            session_timeout_s=10.0,
+            extra_env=(("AGENTSURGE_TEST_ENV_PROBE", "secret-marker-42"),),
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path / "ws")
+    session = _make_session("env_check")
+    await renderer.run(session)
+
+    stdout_jsonl = (tmp_path / "ws" / "env_check" / "stdout.jsonl").read_text()
+    assert "secret-marker-42" in stdout_jsonl
+
+
+@pytest.mark.asyncio
 async def test_runner_dispatches_to_echo(tmp_path: Path):
     cfg = BenchmarkConfig(
         vllm_url="http://x",

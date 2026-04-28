@@ -82,6 +82,7 @@ class FrontendSessionRenderer:
         fconfig = _build_frontend_config(self.config, session_dir)
         cmd = provider.build_command(artifacts, fconfig)
         timeout_s = fconfig.session_timeout_s
+        subprocess_env = {**os.environ, **dict(fconfig.extra_env or {})}
 
         first_event_t: float | None = None
         first_assistant_text_t: float | None = None
@@ -102,6 +103,7 @@ class FrontendSessionRenderer:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(session_dir),
+                    env=subprocess_env,
                     preexec_fn=os.setsid,
                 )
             except BaseException:

@@ -15,7 +15,7 @@ from agentsurge.frontends.render import render_session
 from agentsurge.types import ReplaySession
 
 _ECHO_SCRIPT = r"""
-import argparse, json, sys, time
+import argparse, json, os, sys, time
 p = argparse.ArgumentParser()
 p.add_argument("--prompt-path", required=True)
 p.add_argument("--mode", default="normal")
@@ -25,6 +25,9 @@ if a.mode == "slow":
     time.sleep(60)
 def emit(o):
     sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
+_probe = os.environ.get("AGENTSURGE_TEST_ENV_PROBE")
+if _probe:
+    emit({"type": "env.probe", "value": _probe})
 emit({"type": "session.started"})
 emit({"type": "cli.process.started"})
 for i in (1, 2, 3):
