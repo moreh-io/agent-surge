@@ -485,6 +485,56 @@ async def test_keep_artifacts_never_deletes_on_failure(tmp_path: Path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_stdout_log_cap_truncates_disk_artifact(tmp_path: Path, monkeypatch):
+    """When stdout exceeds the cap, the on-disk artifact is bounded and ends
+    with a meta.log_truncated marker, while the parser still sees every event."""
+    monkeypatch.setattr(FrontendSessionRenderer, "MAX_LOG_BYTES", 200)
+
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="always"
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    result = await renderer.run(_make_session("s_cap"))
+
+    fm = result.frontend_metrics
+    assert fm is not None
+    # Parser saw all 8 events even though disk artifact was truncated.
+    assert fm.event_count == 8
+
+    stdout_path = tmp_path / "s_cap" / "stdout.jsonl"
+    size = stdout_path.stat().st_size
+    # Cap is 200 bytes; allow 200 bytes of slack for the truncation marker.
+    assert size <= 200 + 200, f"stdout.jsonl size {size} exceeds bounded ceiling"
+
+    lines = [ln for ln in stdout_path.read_text().splitlines() if ln.strip()]
+    last = json.loads(lines[-1])
+    assert last["type"] == "meta.log_truncated"
+
+
+@pytest.mark.asyncio
+async def test_stdout_log_cap_not_hit_for_small_output(tmp_path: Path):
+    """At the default 10 MB cap, echo's small output produces no truncation marker."""
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="echo", session_timeout_s=10.0, keep_artifacts="always"
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    await renderer.run(_make_session("s_no_cap"))
+
+    stdout_text = (tmp_path / "s_no_cap" / "stdout.jsonl").read_text()
+    assert "meta.log_truncated" not in stdout_text
+
+
+@pytest.mark.asyncio
 async def test_keep_artifacts_default_is_failed(tmp_path: Path):
     settings = FrontendRuntimeSettings(name="echo")
     assert settings.keep_artifacts == "failed"

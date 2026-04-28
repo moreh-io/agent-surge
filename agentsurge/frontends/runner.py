@@ -25,6 +25,8 @@ from agentsurge.types import (
     TurnResult,
 )
 
+_DEFAULT_MAX_LOG_BYTES = 10 * 1024 * 1024
+
 
 def _build_frontend_config(cfg: BenchmarkConfig, session_dir: Path) -> FrontendConfig:
     fr = cfg.frontend
@@ -55,6 +57,8 @@ def _build_frontend_config(cfg: BenchmarkConfig, session_dir: Path) -> FrontendC
 
 
 class FrontendSessionRenderer:
+    MAX_LOG_BYTES = _DEFAULT_MAX_LOG_BYTES
+
     def __init__(self, config: BenchmarkConfig, run_workspace: Path) -> None:
         self.config = config
         self.run_workspace = Path(run_workspace)
@@ -192,16 +196,33 @@ class FrontendSessionRenderer:
             stdout_f.close()
             raise
 
+        max_log_bytes = type(self).MAX_LOG_BYTES
+        stdout_bytes_written = 0
+        stdout_truncated = False
+        stderr_bytes_written = 0
+        stderr_truncated = False
+
         async def _consume_stdout() -> None:
             nonlocal first_event_t, first_assistant_text_t, last_assistant_text_t
             nonlocal final_message_t, usage_dict, event_count, delta_count
+            nonlocal stdout_bytes_written, stdout_truncated
             assert proc.stdout is not None
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     return
-                stdout_f.write(line)
-                stdout_f.flush()
+                if stdout_bytes_written < max_log_bytes:
+                    stdout_f.write(line)
+                    stdout_f.flush()
+                    stdout_bytes_written += len(line)
+                    if stdout_bytes_written >= max_log_bytes and not stdout_truncated:
+                        stdout_truncated = True
+                        marker = (
+                            '{"type":"meta.log_truncated","note":"stdout exceeded '
+                            f'{max_log_bytes} bytes; further output suppressed"}}\n'
+                        ).encode()
+                        stdout_f.write(marker)
+                        stdout_f.flush()
                 now = time.monotonic()
                 try:
                     decoded = line.decode("utf-8", errors="replace")
@@ -227,13 +248,24 @@ class FrontendSessionRenderer:
                         usage_dict = dict(ev.usage)
 
         async def _consume_stderr() -> None:
+            nonlocal stderr_bytes_written, stderr_truncated
             assert proc.stderr is not None
             while True:
                 line = await proc.stderr.readline()
                 if not line:
                     return
-                stderr_f.write(line)
-                stderr_f.flush()
+                if stderr_bytes_written < max_log_bytes:
+                    stderr_f.write(line)
+                    stderr_f.flush()
+                    stderr_bytes_written += len(line)
+                    if stderr_bytes_written >= max_log_bytes and not stderr_truncated:
+                        stderr_truncated = True
+                        marker = (
+                            f"[agentsurge: stderr exceeded {max_log_bytes} "
+                            "bytes; further output suppressed]\n"
+                        ).encode()
+                        stderr_f.write(marker)
+                        stderr_f.flush()
 
         try:
             await asyncio.wait_for(
