@@ -48,19 +48,44 @@ UPSTREAM_BASE: web.AppKey[str] = web.AppKey("upstream_base", str)
 TIMEOUT_S: web.AppKey[float] = web.AppKey("timeout_s", float)
 
 
+def _extract_text(content: object) -> list[str]:
+    """Pull every text fragment out of a Responses-API ``content`` field.
+
+    The field is either a string or a list of typed parts (``input_text``,
+    ``text``, etc.) — both shapes are flattened to a list of plain strings.
+    """
+    if isinstance(content, str):
+        return [content] if content else []
+    if not isinstance(content, list):
+        return []
+    out: list[str] = []
+    for part in content:
+        if isinstance(part, dict):
+            text = part.get("text") or part.get("input_text") or ""
+            if isinstance(text, str) and text:
+                out.append(text)
+    return out
+
+
 def _rewrite_responses_body(raw: bytes) -> bytes:
-    """Rewrite developer→system roles inside a Responses-API request body.
+    """Move every developer/system message in ``input[]`` into ``instructions``.
 
-    Two transforms, both required for restrictive chat templates (Qwen 3.6
-    etc.) to accept the request:
-      1. ``developer`` role → ``system``.
-      2. All ``system`` messages — original and rewritten — float to the
-         front of ``input[]``, preserving relative order. Qwen 3.6 enforces
-         "system message must be at the beginning" and rejects 400 otherwise.
+    Codex 0.125+ sends a Responses request whose ``input`` array begins with
+    a ``developer`` message (its agent prompt), but vLLM's Responses adapter
+    *also* renders the top-level ``instructions`` field as a system message.
+    With both sources present the chat template ends up with multiple system
+    messages and Qwen 3.6 rejects 400 ("System message must be at the
+    beginning"). Keeping the role ``developer`` is also rejected outright.
 
-    Preserves the body byte-for-byte if it isn't valid JSON or if it doesn't
-    have the expected ``input: [...]`` shape — the upstream surfaces schema
-    errors more clearly than this shim ever could.
+    The fix: concatenate every ``developer``/``system`` message's text into
+    the ``instructions`` string and drop those entries from ``input``. The
+    forwarded request now has exactly one logical system source
+    (``instructions``) and an ``input`` array of only ``user``/``assistant``
+    turns, which the chat template renders correctly.
+
+    Preserves the body byte-for-byte if it isn't valid JSON, doesn't have an
+    ``input: [...]`` array, or doesn't contain any system-like messages — the
+    upstream surfaces schema errors more clearly than this shim ever could.
     """
     if not raw:
         return raw
@@ -73,17 +98,29 @@ def _rewrite_responses_body(raw: bytes) -> bytes:
     inp = obj.get("input")
     if not isinstance(inp, list):
         return raw
-    rewrote_role = False
+
+    system_chunks: list[str] = []
+    kept: list[Any] = []
     for msg in inp:
-        if isinstance(msg, dict) and msg.get("role") == "developer":
-            msg["role"] = "system"
-            rewrote_role = True
-    system_msgs = [m for m in inp if isinstance(m, dict) and m.get("role") == "system"]
-    other_msgs = [m for m in inp if not (isinstance(m, dict) and m.get("role") == "system")]
-    needs_reorder = inp[: len(system_msgs)] != system_msgs
-    if not rewrote_role and not needs_reorder:
+        if isinstance(msg, dict) and msg.get("role") in ("developer", "system"):
+            system_chunks.extend(_extract_text(msg.get("content")))
+        else:
+            kept.append(msg)
+
+    if not system_chunks:
         return raw
-    obj["input"] = system_msgs + other_msgs
+
+    existing = obj.get("instructions")
+    if existing is not None and not isinstance(existing, str):
+        return raw
+
+    merged = existing or ""
+    for chunk in system_chunks:
+        if merged:
+            merged += "\n\n"
+        merged += chunk
+    obj["instructions"] = merged
+    obj["input"] = kept
     return json.dumps(obj).encode("utf-8")
 
 

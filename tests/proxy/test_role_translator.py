@@ -73,7 +73,11 @@ async def _proxy_under_test():
         await upstream_server.close()
 
 
-async def test_responses_developer_role_rewritten_to_system():
+async def test_responses_developer_message_merged_into_instructions():
+    """A bare ``developer`` message in input[] is moved into ``instructions``
+    so vLLM's Responses-adapter sees exactly one system source. With no
+    pre-existing instructions, the developer content becomes the whole
+    instructions string."""
     async with _proxy_under_test() as (proxy_url, captured):
         body = {
             "model": "qwen3.6-27b",
@@ -89,39 +93,84 @@ async def test_responses_developer_role_rewritten_to_system():
         assert len(captured) == 1
         forwarded = captured[0]["body"]
         roles = [m["role"] for m in forwarded["input"]]
-        assert roles == ["system", "user"], f"expected developer→system rewrite, got {roles}"
+        assert roles == ["user"], f"developer should be removed from input; got {roles}"
+        assert forwarded.get("instructions") == "be brief"
 
 
-async def test_responses_system_messages_reordered_to_front():
-    """Qwen 3.6's chat template enforces "system message must be at the
-    beginning". After developer→system rewrite, the rewritten message must
-    float to the front of input[] (relative order among system messages
-    preserved). Concrete failure: 2026-04-29 mi250-069 E2E run hit HTTP
-    400 on every Codex session because the rewritten system message stayed
-    after a user message."""
+async def test_responses_developer_appended_to_existing_instructions():
+    """Codex sends a Responses request with both ``instructions`` (its
+    agent prompt) and a ``developer`` message in input. The translator must
+    concatenate the developer content onto the existing instructions
+    (separated by a blank line) so neither system source is dropped."""
     async with _proxy_under_test() as (proxy_url, captured):
         body = {
             "model": "qwen3.6-27b",
+            "instructions": "You are a coding agent.",
             "input": [
-                {"role": "user", "content": "ctx"},
-                {"role": "developer", "content": "be brief"},
+                {"role": "developer", "content": "be concise"},
                 {"role": "user", "content": "hi"},
-                {"role": "system", "content": "preamble"},
             ],
         }
         async with aiohttp.ClientSession() as client:
             resp = await client.post(f"{proxy_url}/v1/responses", json=body)
             assert resp.status == 200
-        forwarded_input = captured[0]["body"]["input"]
-        roles = [m["role"] for m in forwarded_input]
-        assert roles == ["system", "system", "user", "user"], (
-            f"system messages must lead; got {roles}"
-        )
-        # Relative order among system messages must be preserved
-        # (rewritten developer comes before original system since that
-        # was the input order).
-        assert forwarded_input[0]["content"] == "be brief"
-        assert forwarded_input[1]["content"] == "preamble"
+        forwarded = captured[0]["body"]
+        assert forwarded["instructions"] == "You are a coding agent.\n\nbe concise"
+        assert [m["role"] for m in forwarded["input"]] == ["user"]
+
+
+async def test_responses_multiple_system_messages_all_merged():
+    """Every developer- and system-role message in input[] gets pulled out;
+    only user/assistant entries remain. Concrete failure: 2026-04-29
+    mi250-069 E2E saw codex sending [developer, user, user] which after
+    role-rewrite alone still left system messages in input alongside the
+    instructions string, triggering a duplicate-system 400."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "instructions": "base",
+            "input": [
+                {"role": "user", "content": "ctx"},
+                {"role": "developer", "content": "rule a"},
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "rule b"},
+                {"role": "assistant", "content": "ack"},
+            ],
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/responses", json=body)
+            assert resp.status == 200
+        forwarded = captured[0]["body"]
+        assert [m["role"] for m in forwarded["input"]] == ["user", "user", "assistant"]
+        # Order: existing instructions, then developer, then system, in input order.
+        assert forwarded["instructions"] == "base\n\nrule a\n\nrule b"
+
+
+async def test_responses_typed_content_parts_extracted():
+    """Real Codex sends content as a list of typed parts
+    ([{"type": "input_text", "text": "..."}], etc.). The translator must
+    flatten those into the merged instructions string just like plain
+    string content."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "input": [
+                {
+                    "role": "developer",
+                    "content": [
+                        {"type": "input_text", "text": "first chunk"},
+                        {"type": "text", "text": "second chunk"},
+                    ],
+                },
+                {"role": "user", "content": "hi"},
+            ],
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/responses", json=body)
+            assert resp.status == 200
+        forwarded = captured[0]["body"]
+        assert forwarded["instructions"] == "first chunk\n\nsecond chunk"
+        assert [m["role"] for m in forwarded["input"]] == ["user"]
 
 
 async def test_responses_no_developer_role_unchanged():
