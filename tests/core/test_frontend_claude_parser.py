@@ -155,6 +155,7 @@ def test_claude_provider_build_command_default(tmp_path: Path):
     prompt_path = str(artifacts.prompt_path)
     assert cmd == [
         "claude",
+        "--verbose",
         "-p",
         "--output-format",
         "stream-json",
@@ -174,6 +175,7 @@ def test_claude_provider_build_command_with_model(tmp_path: Path):
     prompt_path = str(artifacts.prompt_path)
     assert cmd == [
         "claude",
+        "--verbose",
         "-p",
         "--output-format",
         "stream-json",

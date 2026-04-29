@@ -59,9 +59,12 @@ class ClaudeProvider:
         # the sole auth source; without it persisted Claude.ai login can win
         # over the configured server-url target.
         if config.server_url:
-            cmd.extend(["--bare", "--verbose"])
+            cmd.append("--bare")
+        # `--verbose` is required by Claude Code when combining --print with
+        # --output-format=stream-json (CLI rejects the combo otherwise).
         cmd.extend(
             [
+                "--verbose",
                 "-p",
                 "--output-format",
                 "stream-json",
