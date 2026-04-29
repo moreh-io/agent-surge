@@ -16,7 +16,10 @@ from agentsurge.frontends.base import (
     FrontendProvider,
     FrontendRunArtifacts,
 )
+from agentsurge.frontends.claude import ClaudeEventParser, ClaudeProvider
+from agentsurge.frontends.codex import CodexEventParser, CodexProvider
 from agentsurge.frontends.echo import EchoEventParser, EchoProvider
+from agentsurge.frontends.opencode import OpenCodeEventParser, OpenCodeProvider
 from agentsurge.types import (
     BenchmarkConfig,
     FrontendMetrics,
@@ -66,6 +69,12 @@ class FrontendSessionRenderer:
     def _resolve_provider(self, name: str) -> tuple[FrontendProvider, FrontendEventParser]:
         if name == "echo":
             return EchoProvider(), EchoEventParser()
+        if name == "codex":
+            return CodexProvider(), CodexEventParser()
+        if name == "claude":
+            return ClaudeProvider(), ClaudeEventParser()
+        if name == "opencode":
+            return OpenCodeProvider(), OpenCodeEventParser()
         raise NotImplementedError(f"frontend {name!r} not yet wired")
 
     def _apply_keep_artifacts_policy(self, result: SessionResult, session_dir: Path) -> None:

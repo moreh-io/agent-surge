@@ -14,9 +14,10 @@ from agentsurge.runner import BenchmarkRunner
 from agentsurge.types import SessionResult
 from agentsurge.types.results import FrontendRuntimeSettings
 
-# "codex" is a legal value for FrontendRuntimeSettings.name but is not yet wired
-# in _resolve_provider, so it falls through to NotImplementedError — exactly
-# what these dispatch tests need to exercise the unwired-frontend code path.
+# All declared frontend names are wired in _resolve_provider as of Task N.2.
+# Tests below that need a non-direct frontend pick "codex" purely so
+# frontend_name != "direct" triggers the frontend-dispatch branch; the
+# _run_session_frontend method itself is mocked, so the wiring isn't exercised.
 _UNWIRED = FrontendRuntimeSettings(name="codex")
 
 
@@ -130,9 +131,21 @@ def test_dispatch_frontend_invokes_frontend_path():
     assert len(results) == 1
 
 
-def test_unwired_frontend_records_failure_in_session_result():
+def test_unwired_frontend_records_failure_in_session_result(monkeypatch):
     """A NotImplementedError raised by _run_session_frontend must surface as
-    a failed SessionResult with metadata['failed']=True (existing capture pattern)."""
+    a failed SessionResult with metadata['failed']=True (existing capture pattern).
+
+    All declared frontend names are now wired, so we force the failure by
+    monkeypatching _resolve_provider to raise — the dispatch-level failure
+    capture itself is what this test pins down.
+    """
+    from agentsurge.frontends.runner import FrontendSessionRenderer
+
+    def _boom(self, name):
+        raise NotImplementedError(f"frontend {name!r} not yet wired")
+
+    monkeypatch.setattr(FrontendSessionRenderer, "_resolve_provider", _boom)
+
     cfg = BenchmarkConfig(vllm_url="http://x", model="t", no_metrics=True)
     cfg.frontend = _UNWIRED
     runner = BenchmarkRunner(cfg)
