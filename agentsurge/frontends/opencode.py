@@ -57,6 +57,42 @@ class OpenCodeProvider:
     def render(self, session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:
         render_session(session, artifacts)
 
+    def build_env(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> dict[str, str]:
+        if not config.server_url:
+            return {}
+
+        # OpenCode 1.14.29 doesn't honor an OPENAI_BASE_URL env override; the
+        # custom endpoint must be declared via opencode.json in cwd, which
+        # the renderer sets to artifacts.session_dir. The provider key is
+        # taken from the slash prefix in --frontend-model (e.g. "vllm" in
+        # "vllm/qwen3.6-27b").
+        model = config.model or ""
+        if "/" not in model:
+            return {}
+        provider_key, model_name = model.split("/", 1)
+        api_key = config.extra_env.get("OPENAI_API_KEY", "")
+        opencode_json = artifacts.session_dir / "opencode.json"
+        opencode_json.write_text(
+            json.dumps(
+                {
+                    "$schema": "https://opencode.ai/config.json",
+                    "provider": {
+                        provider_key: {
+                            "npm": "@ai-sdk/openai-compatible",
+                            "name": "AgentSurge target",
+                            "options": {
+                                "baseURL": config.server_url.rstrip("/") + "/v1",
+                                "apiKey": api_key,
+                            },
+                            "models": {model_name: {}},
+                        }
+                    },
+                },
+                indent=2,
+            )
+        )
+        return {}
+
     def build_command(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> list[str]:
         workspace = str(artifacts.session_dir)
         prompt_path = str(artifacts.prompt_path)
@@ -70,16 +106,21 @@ class OpenCodeProvider:
                 for part in config.command_template
             ]
 
-        cmd: list[str] = ["opencode", "run", "--format", "json"]
+        # opencode 1.14.x parses `[message..]` greedily — placing the message
+        # AFTER `--file` consumes it as a second filename. Order must be:
+        # `opencode run "<msg>" --format json --model X --file=<path>`. The
+        # `--file=<path>` form (no space) further constrains the yargs array
+        # to one value.
+        cmd: list[str] = [
+            "opencode",
+            "run",
+            "Complete the AgentSurge session described in the attached file.",
+            "--format",
+            "json",
+        ]
         if config.model is not None:
             cmd.extend(["--model", config.model])
-        cmd.extend(
-            [
-                "--file",
-                prompt_path,
-                "Complete the AgentSurge session described in the attached file.",
-            ]
-        )
+        cmd.append(f"--file={prompt_path}")
         return cmd
 
 

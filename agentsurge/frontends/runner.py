@@ -43,6 +43,7 @@ def _build_frontend_config(cfg: BenchmarkConfig, session_dir: Path) -> FrontendC
             model=None,
             session_timeout_s=7200.0,
             extra_env={},
+            server_url=None,
         )
     cmd_template: list[str] | None = None
     if fr.command_template:
@@ -56,6 +57,7 @@ def _build_frontend_config(cfg: BenchmarkConfig, session_dir: Path) -> FrontendC
         model=fr.model,
         session_timeout_s=fr.session_timeout_s,
         extra_env=dict(fr.extra_env),
+        server_url=fr.server_url,
     )
 
 
@@ -118,7 +120,16 @@ class FrontendSessionRenderer:
         fconfig = _build_frontend_config(self.config, session_dir)
         cmd = provider.build_command(artifacts, fconfig)
         timeout_s = fconfig.session_timeout_s
-        subprocess_env = {**os.environ, **dict(fconfig.extra_env or {})}
+        # Provider env contributions (e.g. CODEX_HOME, ANTHROPIC_BASE_URL)
+        # take precedence over inherited os.environ so a stale persisted CLI
+        # auth doesn't override the configured benchmark target. User's
+        # --frontend-extra-env wins last so explicit overrides still work.
+        provider_env = provider.build_env(artifacts, fconfig)
+        subprocess_env = {
+            **os.environ,
+            **provider_env,
+            **dict(fconfig.extra_env or {}),
+        }
 
         first_event_t: float | None = None
         first_assistant_text_t: float | None = None
@@ -137,6 +148,7 @@ class FrontendSessionRenderer:
                 try:
                     proc = await asyncio.create_subprocess_exec(
                         *cmd,
+                        stdin=asyncio.subprocess.DEVNULL,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=str(session_dir),

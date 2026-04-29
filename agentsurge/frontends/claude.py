@@ -24,7 +24,7 @@ class ClaudeProvider:
     name = "claude"
     capabilities = FrontendProviderCapabilities(
         name="claude",
-        supports_custom_base_url=False,
+        supports_custom_base_url=True,
         supports_openai_compatible_endpoint=False,
         model_name_format="claude-alias-or-full-name",
         auth_sources=("ANTHROPIC_API_KEY",),
@@ -54,17 +54,46 @@ class ClaudeProvider:
                 for part in config.command_template
             ]
 
-        cmd: list[str] = [
-            "claude",
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--include-partial-messages",
-        ]
+        cmd: list[str] = ["claude"]
+        # --bare suppresses OAuth/keychain reads so ANTHROPIC_API_KEY env is
+        # the sole auth source; without it persisted Claude.ai login can win
+        # over the configured server-url target.
+        if config.server_url:
+            cmd.extend(["--bare", "--verbose"])
+        cmd.extend(
+            [
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--include-partial-messages",
+            ]
+        )
         if config.model is not None:
             cmd.extend(["--model", config.model])
         cmd.append(f"Read {prompt_path} and complete the AgentSurge session described there.")
         return cmd
+
+    def build_env(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> dict[str, str]:
+        if not config.server_url:
+            return {}
+        # Claude Code reads ANTHROPIC_BASE_URL directly; no config file needed.
+        # User must supply ANTHROPIC_API_KEY via --frontend-extra-env or shell
+        # env. We don't synthesize a key because vLLM-style targets ignore it
+        # and real Anthropic-compatible gateways have user-specific auth.
+        env = {"ANTHROPIC_BASE_URL": config.server_url.rstrip("/")}
+        # Mirror the user's ANTHROPIC_API_KEY into ANTHROPIC_AUTH_TOKEN: Claude
+        # Code 2.1.x sends ANTHROPIC_API_KEY as the x-api-key header, but
+        # OpenAI-compatible targets (vLLM `/v1/messages`) only accept
+        # `Authorization: Bearer ...`, which Claude populates from
+        # ANTHROPIC_AUTH_TOKEN. Without this mirror every request 401's.
+        # User-set ANTHROPIC_AUTH_TOKEN (via --frontend-extra-env) still wins
+        # because extra_env merges last in the renderer.
+        api_key = config.extra_env.get("ANTHROPIC_API_KEY") or config.extra_env.get(
+            "ANTHROPIC_AUTH_TOKEN"
+        )
+        if api_key:
+            env["ANTHROPIC_AUTH_TOKEN"] = api_key
+        return env
 
 
 class ClaudeEventParser:

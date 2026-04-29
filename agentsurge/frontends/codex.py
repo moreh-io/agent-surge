@@ -18,15 +18,27 @@ from agentsurge.frontends.base import (
 from agentsurge.frontends.render import render_session
 from agentsurge.types import ReplaySession
 
+_CODEX_PROVIDER_NAME = "agentsurge_target"
+
+_CODEX_CONFIG_TEMPLATE = """\
+model_provider = "{provider}"
+
+[model_providers.{provider}]
+name = "AgentSurge target"
+base_url = "{base_url}"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+"""
+
 
 class CodexProvider:
     name = "codex"
     capabilities = FrontendProviderCapabilities(
         name="codex",
-        supports_custom_base_url=False,
-        supports_openai_compatible_endpoint=False,
+        supports_custom_base_url=True,
+        supports_openai_compatible_endpoint=True,
         model_name_format="codex-model-name",
-        auth_sources=("CODEX_API_KEY",),
+        auth_sources=("OPENAI_API_KEY", "CODEX_API_KEY"),
         config_file_strategy="codex-config",
         proxy_supported=False,
         structured_output_format="jsonl",
@@ -39,6 +51,28 @@ class CodexProvider:
 
     def render(self, session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:
         render_session(session, artifacts)
+
+    def build_env(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> dict[str, str]:
+        if not config.server_url:
+            return {}
+        # Codex reads model_provider + base_url from $CODEX_HOME/config.toml
+        # (env vars like OPENAI_BASE_URL are ignored). Per-session CODEX_HOME
+        # keeps the user's persisted ChatGPT auth from leaking into the run.
+        codex_home = artifacts.session_dir / "codex_home"
+        codex_home.mkdir(parents=True, exist_ok=True)
+        config_path = codex_home / "config.toml"
+        # Codex appends "/responses" without a /v1 prefix; the base_url must
+        # therefore already end in /v1 for OpenAI-compatible upstreams.
+        base = config.server_url.rstrip("/")
+        if not base.endswith("/v1"):
+            base = base + "/v1"
+        config_path.write_text(
+            _CODEX_CONFIG_TEMPLATE.format(
+                provider=_CODEX_PROVIDER_NAME,
+                base_url=base,
+            )
+        )
+        return {"CODEX_HOME": str(codex_home)}
 
     def build_command(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> list[str]:
         workspace = str(artifacts.session_dir)
@@ -60,6 +94,9 @@ class CodexProvider:
             "exec",
             "--json",
             "--ephemeral",
+            # The renderer creates session_dir as a fresh dir, not a git repo;
+            # codex 0.125+ refuses to run in untrusted non-git dirs by default.
+            "--skip-git-repo-check",
             "--cd",
             workspace,
         ]

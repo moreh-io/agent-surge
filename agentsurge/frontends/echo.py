@@ -76,6 +76,9 @@ class EchoProvider:
     def render(self, session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:
         render_session(session, artifacts)
 
+    def build_env(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> dict[str, str]:
+        return {}
+
     def build_command(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> list[str]:
         if config.command_template:
             return [

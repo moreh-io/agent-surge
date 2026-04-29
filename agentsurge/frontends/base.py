@@ -18,6 +18,7 @@ class FrontendConfig:
     model: str | None
     session_timeout_s: float
     extra_env: dict[str, str]
+    server_url: str | None = None
 
 
 @dataclass
@@ -47,6 +48,26 @@ class FrontendProvider(Protocol):
     def build_command(
         self, artifacts: FrontendRunArtifacts, config: FrontendConfig
     ) -> list[str]: ...
+
+    def build_env(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> dict[str, str]:
+        """Return env vars to inject into the spawned CLI subprocess.
+
+        May also write provider-specific config files into artifacts.session_dir
+        as a side effect (Codex needs ~/.codex/config.toml, OpenCode needs
+        ./opencode.json) — the env vars then point the CLI at those files.
+
+        When ``config.server_url`` is set, providers that declare
+        ``supports_custom_base_url=True`` translate it into the CLI's native
+        base-URL configuration. Providers that don't support it must raise
+        ``CapabilityError`` so the run fails loudly instead of silently
+        hitting the CLI's persisted public-provider auth.
+        """
+        ...
+
+
+class CapabilityError(RuntimeError):
+    """Raised when ``--frontend-server-url`` is set on a provider that does
+    not support a configurable base URL."""
 
 
 class FrontendEventParser(Protocol):
