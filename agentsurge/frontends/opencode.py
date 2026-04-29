@@ -58,8 +58,17 @@ class OpenCodeProvider:
         render_session(session, artifacts)
 
     def build_env(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> dict[str, str]:
+        # XDG_DATA_HOME isolation: opencode's SQLite session DB lives under
+        # $XDG_DATA_HOME/opencode/opencode.db. Concurrent sessions sharing
+        # the default $HOME corrupt the WAL files (documented in design doc
+        # §Real Fixture Notes; reproduced during 2026-04-29 E2E debug). A
+        # per-session XDG_DATA_HOME gives every session its own DB.
+        xdg_home = artifacts.session_dir / "xdg"
+        xdg_home.mkdir(parents=True, exist_ok=True)
+        env: dict[str, str] = {"XDG_DATA_HOME": str(xdg_home)}
+
         if not config.server_url:
-            return {}
+            return env
 
         # OpenCode 1.14.29 doesn't honor an OPENAI_BASE_URL env override; the
         # custom endpoint must be declared via opencode.json in cwd, which
@@ -68,7 +77,7 @@ class OpenCodeProvider:
         # "vllm/qwen3.6-27b").
         model = config.model or ""
         if "/" not in model:
-            return {}
+            return env
         provider_key, model_name = model.split("/", 1)
         api_key = config.extra_env.get("OPENAI_API_KEY", "")
         opencode_json = artifacts.session_dir / "opencode.json"
@@ -91,7 +100,7 @@ class OpenCodeProvider:
                 indent=2,
             )
         )
-        return {}
+        return env
 
     def build_command(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> list[str]:
         workspace = str(artifacts.session_dir)
