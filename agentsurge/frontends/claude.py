@@ -99,8 +99,23 @@ class ClaudeEventParser:
     def _dispatch(self, obj: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
         type_str = obj.get("type")
         if type_str == "system":
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_STARTED, raw=obj)]
+            # Only system.subtype == "init" is the canonical session-init event.
+            # Other subtypes (hook_started, hook_response, status, ...) are
+            # session-management noise and route to PARSER_UNKNOWN.
+            subtype = obj.get("subtype")
+            if subtype == "init":
+                return [
+                    FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_STARTED, raw=obj)
+                ]
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
         if type_str == "assistant":
+            # Error-path assistant events carry a top-level "error" field; the
+            # subsequent result event is the source-of-truth for failures, so
+            # treat the assistant event as parser-noise here.
+            if obj.get("error"):
+                return [
+                    FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)
+                ]
             text = self._extract_assistant_text(obj)
             return [
                 FrontendEvent(
@@ -114,23 +129,35 @@ class ClaudeEventParser:
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_USER_MESSAGE, raw=obj)]
         if type_str == "stream_event":
             event = obj.get("event")
-            if isinstance(event, dict) and event.get("type") == "content_block_delta":
-                delta = event.get("delta")
-                if isinstance(delta, dict) and delta.get("type") == "text_delta":
-                    text = delta.get("text", "")
-                    text_delta = text if isinstance(text, str) else ""
+            if isinstance(event, dict):
+                inner_type = event.get("type")
+                if inner_type == "content_block_delta":
+                    delta = event.get("delta")
+                    if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                        text = delta.get("text", "")
+                        text_delta = text if isinstance(text, str) else ""
+                        return [
+                            FrontendEvent(
+                                ts_monotonic=ts_monotonic,
+                                kind=E.EVENT_ASSISTANT_TEXT_DELTA,
+                                text_delta=text_delta,
+                                raw=obj,
+                            )
+                        ]
+                if inner_type == "message_start":
                     return [
                         FrontendEvent(
-                            ts_monotonic=ts_monotonic,
-                            kind=E.EVENT_ASSISTANT_TEXT_DELTA,
-                            text_delta=text_delta,
-                            raw=obj,
+                            ts_monotonic=ts_monotonic, kind=E.EVENT_MESSAGE_START, raw=obj
                         )
                     ]
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
+        if type_str == "rate_limit_event":
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
         if type_str == "result":
             # Branch: error results surface as EVENT_ERROR; success results
-            # produce usage + session-completed terminal events.
+            # produce usage + session-completed terminal events. Note that
+            # real CLI emits subtype="success" even when is_error=True, so we
+            # must branch on is_error rather than subtype.
             if obj.get("is_error") is True:
                 return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=obj)]
             usage_raw = obj.get("usage")

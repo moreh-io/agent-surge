@@ -1,0 +1,21 @@
+{
+  "cli_name": "Claude Code",
+  "cli_version": "2.1.122",
+  "capture_date": "2026-04-28",
+  "captures": [
+    {
+      "name": "simple_session",
+      "command": "claude -p --output-format stream-json --include-partial-messages --verbose \"Print exactly one short sentence. Do not call any tools.\"",
+      "exit_code": 0,
+      "stdout_lines": 14,
+      "notes": "Captured inside an existing Claude Code session; 'system.hook_response' line includes parent-session hook context (large embedded JSON string). The model's reply (\"Acknowledged—standing by for your next instruction.\") is influenced by parent context but parser correctness is independent of content."
+    },
+    {
+      "name": "error_session",
+      "command": "claude -p --output-format stream-json --include-partial-messages --verbose --model NO_SUCH_MODEL_xyz \"x\"",
+      "exit_code": 1,
+      "stdout_lines": 6,
+      "notes": "Error path. assistant event carries top-level error:\"invalid_request\"; result event has is_error:true and api_error_status:404, but subtype is still \"success\" (consider this an upstream quirk)."
+    }
+  ]
+}

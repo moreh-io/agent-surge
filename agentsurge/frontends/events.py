@@ -5,6 +5,7 @@ from agentsurge.frontends.base import FrontendEvent
 
 EVENT_SESSION_STARTED = "session.started"
 EVENT_CLI_PROCESS_STARTED = "cli.process.started"
+EVENT_MESSAGE_START = "message.start"
 EVENT_ASSISTANT_TEXT_DELTA = "assistant.text.delta"
 EVENT_ASSISTANT_MESSAGE_COMPLETED = "assistant.message.completed"
 EVENT_USAGE_COMPLETED = "usage.completed"

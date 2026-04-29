@@ -89,7 +89,7 @@ def test_parse_multiple_lines_in_single_call():
 
 def test_parse_garbage_line_emits_parser_error_and_recovers():
     parser = ClaudeEventParser()
-    payload = 'not json\n{"type":"system"}\n'
+    payload = 'not json\n{"type":"system","subtype":"init"}\n'
     events = parser.feed_stdout_line(payload, ts_monotonic=0.0)
     kinds = [e.kind for e in events]
     assert kinds == [E.EVENT_PARSER_ERROR, E.EVENT_SESSION_STARTED]
@@ -172,6 +172,51 @@ def test_claude_provider_build_command_with_model(tmp_path: Path):
         "claude-opus-4-7",
         f"Read {prompt_path} and complete the AgentSurge session described there.",
     ]
+
+
+def test_parse_real_simple_session_v2_1_122():
+    """Real Claude Code 2.1.122 success-path fixture parses cleanly.
+
+    The capture includes hook events (which we route to PARSER_UNKNOWN), an init system
+    event, several stream_event envelopes (message_start, content_block_*,
+    message_delta, message_stop), a full assistant message, a rate_limit_event,
+    and a final result event.
+    """
+    fixture = Path(__file__).parent / "fixtures" / "claude" / "real_simple_session_v2.1.122.jsonl"
+    parser = ClaudeEventParser()
+    events = []
+    for line in fixture.read_text().splitlines():
+        if line.strip():
+            events.extend(parser.feed_stdout_line(line + "\n", ts_monotonic=0.0))
+    events.extend(parser.finish(0, 0.0))
+
+    kinds = [e.kind for e in events]
+    assert E.EVENT_SESSION_STARTED in kinds
+    assert E.EVENT_MESSAGE_START in kinds
+    assert kinds.count(E.EVENT_ASSISTANT_TEXT_DELTA) == 2
+    assert E.EVENT_ASSISTANT_MESSAGE_COMPLETED in kinds
+    assert E.EVENT_USAGE_COMPLETED in kinds
+    assert E.EVENT_SESSION_COMPLETED in kinds
+    assert E.EVENT_PARSER_ERROR not in kinds
+
+
+def test_parse_real_error_session_v2_1_122():
+    """Real Claude Code 2.1.122 error-path fixture: result.is_error=True surfaces as EVENT_ERROR."""
+    fixture = Path(__file__).parent / "fixtures" / "claude" / "real_error_session_v2.1.122.jsonl"
+    parser = ClaudeEventParser()
+    events = []
+    for line in fixture.read_text().splitlines():
+        if line.strip():
+            events.extend(parser.feed_stdout_line(line + "\n", ts_monotonic=0.0))
+    events.extend(parser.finish(1, 0.0))
+
+    kinds = [e.kind for e in events]
+    assert E.EVENT_ERROR in kinds
+    assert E.EVENT_USAGE_COMPLETED not in kinds
+    assert E.EVENT_SESSION_COMPLETED not in kinds
+    error_event = next(e for e in events if e.kind == E.EVENT_ERROR)
+    assert isinstance(error_event.raw, dict)
+    assert error_event.raw.get("api_error_status") == 404
 
 
 def test_finish_drains_buffer():
