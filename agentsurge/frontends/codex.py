@@ -106,7 +106,15 @@ class CodexProvider:
             [
                 "--output-last-message",
                 final_message,
-                f"Read {prompt_path} and complete the AgentSurge session described there.",
+                # The harness measures CLI throughput, not agentic tool use.
+                # Synthetic prompts often look like code; without an explicit
+                # no-tools nudge models loop on shell/edit calls until the
+                # session_timeout fires. Concrete failure: 2026-04-29 mi250-069
+                # 4-concurrent smoke saw 50% of OpenCode/Claude sessions hit
+                # 300 s timeouts mid tool-call.
+                f"Read {prompt_path} and complete the AgentSurge session "
+                f"described there. Respond with text only — do not call any "
+                f"tools, do not run shell commands, do not read or edit files.",
             ]
         )
         return cmd

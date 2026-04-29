@@ -123,7 +123,13 @@ class OpenCodeProvider:
         cmd: list[str] = [
             "opencode",
             "run",
-            "Complete the AgentSurge session described in the attached file.",
+            # Strong no-tools nudge: the harness measures CLI throughput, not
+            # agentic tool use. Without this opencode loops on bash/edit/grep
+            # for synthetic-code prompts until session_timeout fires (50% of
+            # 4-concurrent smoke sessions hit 300 s on 2026-04-29 mi250-069).
+            "Complete the AgentSurge session described in the attached "
+            "file. Respond with text only — do not call any tools, do not "
+            "run shell commands, do not read or edit files.",
             "--format",
             "json",
         ]

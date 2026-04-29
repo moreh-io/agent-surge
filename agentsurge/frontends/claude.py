@@ -66,11 +66,22 @@ class ClaudeProvider:
                 "--output-format",
                 "stream-json",
                 "--include-partial-messages",
+                # Hard-disable every built-in tool. The harness measures CLI
+                # throughput, not agentic tool execution; without this Claude
+                # invokes Bash on synthetic-code prompts and loops until the
+                # session_timeout (50% of multi-session smoke runs hit 300 s
+                # on 2026-04-29 mi250-069). Empty string = "no tools".
+                "--allowedTools",
+                "",
             ]
         )
         if config.model is not None:
             cmd.extend(["--model", config.model])
-        cmd.append(f"Read {prompt_path} and complete the AgentSurge session described there.")
+        cmd.append(
+            f"Read {prompt_path} and complete the AgentSurge session "
+            f"described there. Respond with text only — do not call any "
+            f"tools, do not run shell commands, do not read or edit files."
+        )
         return cmd
 
     def build_env(self, artifacts: FrontendRunArtifacts, config: FrontendConfig) -> dict[str, str]:

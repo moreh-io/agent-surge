@@ -205,13 +205,16 @@ def test_codex_provider_build_command_default(tmp_path: Path):
         "exec",
         "--json",
         "--ephemeral",
+        "--skip-git-repo-check",
         "--cd",
         workspace,
         "--model",
         "gpt-5.2-codex",
         "--output-last-message",
         final_message,
-        f"Read {prompt_path} and complete the AgentSurge session described there.",
+        f"Read {prompt_path} and complete the AgentSurge session "
+        f"described there. Respond with text only — do not call any "
+        f"tools, do not run shell commands, do not read or edit files.",
     ]
 
 
@@ -227,9 +230,12 @@ def test_codex_provider_build_command_no_model(tmp_path: Path):
         "exec",
         "--json",
         "--ephemeral",
+        "--skip-git-repo-check",
         "--cd",
         workspace,
         "--output-last-message",
         final_message,
-        f"Read {prompt_path} and complete the AgentSurge session described there.",
+        f"Read {prompt_path} and complete the AgentSurge session "
+        f"described there. Respond with text only — do not call any "
+        f"tools, do not run shell commands, do not read or edit files.",
     ]

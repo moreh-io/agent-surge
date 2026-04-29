@@ -97,16 +97,19 @@ def test_opencode_provider_build_command_default(tmp_path: Path):
     config = _make_config("anthropic/claude-3-5-sonnet")
     cmd = OpenCodeProvider().build_command(artifacts, config)
     prompt_path = str(artifacts.prompt_path)
+    # Message must precede flags and --file uses `=` syntax — yargs greedily
+    # consumes `--file <path> <message>` as a two-element file array.
     assert cmd == [
         "opencode",
         "run",
+        "Complete the AgentSurge session described in the attached "
+        "file. Respond with text only — do not call any tools, do not "
+        "run shell commands, do not read or edit files.",
         "--format",
         "json",
         "--model",
         "anthropic/claude-3-5-sonnet",
-        "--file",
-        prompt_path,
-        "Complete the AgentSurge session described in the attached file.",
+        f"--file={prompt_path}",
     ]
 
 
@@ -119,9 +122,10 @@ def test_opencode_provider_build_command_no_model(tmp_path: Path):
     assert cmd == [
         "opencode",
         "run",
+        "Complete the AgentSurge session described in the attached "
+        "file. Respond with text only — do not call any tools, do not "
+        "run shell commands, do not read or edit files.",
         "--format",
         "json",
-        "--file",
-        prompt_path,
-        "Complete the AgentSurge session described in the attached file.",
+        f"--file={prompt_path}",
     ]

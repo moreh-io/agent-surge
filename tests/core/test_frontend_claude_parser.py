@@ -142,6 +142,12 @@ def _make_config(model: str | None) -> FrontendConfig:
     )
 
 
+_NO_TOOLS_MESSAGE_SUFFIX = (
+    " Respond with text only — do not call any tools, do not run shell "
+    "commands, do not read or edit files."
+)
+
+
 def test_claude_provider_build_command_default(tmp_path: Path):
     artifacts = _make_artifacts(tmp_path)
     config = _make_config(None)
@@ -153,7 +159,10 @@ def test_claude_provider_build_command_default(tmp_path: Path):
         "--output-format",
         "stream-json",
         "--include-partial-messages",
-        f"Read {prompt_path} and complete the AgentSurge session described there.",
+        "--allowedTools",
+        "",
+        f"Read {prompt_path} and complete the AgentSurge session "
+        f"described there.{_NO_TOOLS_MESSAGE_SUFFIX}",
     ]
 
 
@@ -168,9 +177,12 @@ def test_claude_provider_build_command_with_model(tmp_path: Path):
         "--output-format",
         "stream-json",
         "--include-partial-messages",
+        "--allowedTools",
+        "",
         "--model",
         "claude-opus-4-7",
-        f"Read {prompt_path} and complete the AgentSurge session described there.",
+        f"Read {prompt_path} and complete the AgentSurge session "
+        f"described there.{_NO_TOOLS_MESSAGE_SUFFIX}",
     ]
 
 
