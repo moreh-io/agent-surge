@@ -13,9 +13,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest  # noqa: F401
+import pytest
 
 from tests.integration.conftest import _REAL_CLI_SKIP, run_agentsurge
+
+pytestmark = pytest.mark.real_cli
 
 
 @_REAL_CLI_SKIP

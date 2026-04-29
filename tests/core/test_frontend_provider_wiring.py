@@ -1,19 +1,18 @@
-"""Hybrid wiring tests for codex/claude/opencode frontend providers.
+"""Hermetic wiring tests for codex/claude/opencode frontend providers.
 
-Layer 1 (default CI): monkeypatch asyncio.create_subprocess_exec so the
-renderer drives each Provider/Parser pair against a captured real fixture
-streamed line-by-line. Verifies _resolve_provider wiring + end-to-end
-metric population without invoking any real binary.
+Monkeypatches ``asyncio.create_subprocess_exec`` so the renderer drives
+each Provider/Parser pair against a captured real fixture streamed
+line-by-line. Verifies ``_resolve_provider`` wiring + end-to-end metric
+population without invoking any real binary.
 
-Layer 2 (opt-in): @pytest.mark.real_cli tests gated on
-AGENTSURGE_E2E_FRONTENDS=1 actually spawn the real codex/claude/opencode
-CLI against a tiny prompt. Skipped by default to keep CI hermetic.
+Real-binary single-session smoke tests live in
+``tests/integration/test_real_cli_single_session.py`` and are opt-in via
+``AGENTSURGE_E2E_FRONTENDS=1`` plus the ``real_cli`` pytest marker.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -161,79 +160,3 @@ async def test_opencode_provider_wired(tmp_path: Path, monkeypatch):
     assert fm.failure_category is None
     assert fm.provider_usage is not None
     assert fm.provider_usage.get("input_tokens") == 78
-
-
-# ---------------------------------------------------------------------------
-# Layer 2 — opt-in real-binary smoke tests. Skipped unless
-# AGENTSURGE_E2E_FRONTENDS=1 is set. Run with: pytest -m real_cli
-# ---------------------------------------------------------------------------
-
-_REAL_CLI_SKIP = pytest.mark.skipif(
-    os.environ.get("AGENTSURGE_E2E_FRONTENDS") != "1",
-    reason="Real CLI tests skipped; set AGENTSURGE_E2E_FRONTENDS=1 to enable.",
-)
-
-_REAL_PROMPT = "Print exactly one short sentence. Do not call any tools."
-
-
-def _real_session(sid: str) -> ReplaySession:
-    return ReplaySession(
-        session_id=sid,
-        turn_messages=[[{"role": "user", "content": _REAL_PROMPT}]],
-        metadata={},
-    )
-
-
-def _real_config(name: str, workspace: Path) -> BenchmarkConfig:
-    return BenchmarkConfig(
-        vllm_url="http://x",
-        model="t",
-        no_metrics=True,
-        frontend=FrontendRuntimeSettings(
-            name=name,
-            session_timeout_s=60.0,
-            keep_artifacts="always",
-            workspace_dir=str(workspace),
-        ),
-    )
-
-
-@pytest.mark.real_cli
-@_REAL_CLI_SKIP
-@pytest.mark.asyncio
-async def test_codex_real_binary_smoke(tmp_path: Path):
-    cfg = _real_config("codex", tmp_path)
-    renderer = FrontendSessionRenderer(cfg, tmp_path)
-    result = await renderer.run(_real_session("s_codex_real"))
-    fm = result.frontend_metrics
-    assert fm is not None
-    assert fm.process_exit_code == 0
-    assert fm.event_count > 0
-
-
-@pytest.mark.real_cli
-@_REAL_CLI_SKIP
-@pytest.mark.asyncio
-async def test_claude_real_binary_smoke(tmp_path: Path):
-    cfg = _real_config("claude", tmp_path)
-    renderer = FrontendSessionRenderer(cfg, tmp_path)
-    result = await renderer.run(_real_session("s_claude_real"))
-    fm = result.frontend_metrics
-    assert fm is not None
-    assert fm.process_exit_code == 0
-    assert fm.event_count > 0
-
-
-@pytest.mark.real_cli
-@_REAL_CLI_SKIP
-@pytest.mark.asyncio
-async def test_opencode_real_binary_smoke(tmp_path: Path):
-    cfg = _real_config("opencode", tmp_path)
-    renderer = FrontendSessionRenderer(cfg, tmp_path)
-    result = await renderer.run(_real_session("s_opencode_real"))
-    fm = result.frontend_metrics
-    assert fm is not None
-    # opencode signals failure via is_error semantics in events; the
-    # process itself should still exit 0 on a successful smoke run.
-    assert fm.process_exit_code == 0
-    assert fm.event_count > 0
