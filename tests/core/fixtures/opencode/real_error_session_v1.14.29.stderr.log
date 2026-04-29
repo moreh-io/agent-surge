@@ -1,0 +1,20 @@
+ProviderModelNotFoundError: ProviderModelNotFoundError
+ data: {
+  providerID: "anthropic",
+  modelID: "no-such-model-xyz",
+  suggestions: [],
+},
+
+      at <anonymous> (/$bunfs/root/chunk-3t0fqs9d.js:779:47206)
+      at ~effect/Effect/successCont (/$bunfs/root/chunk-vn1rjvmw.js:25:7738)
+      at runLoop (/$bunfs/root/chunk-vn1rjvmw.js:25:2045)
+      at evaluate (/$bunfs/root/chunk-vn1rjvmw.js:25:1435)
+      at <anonymous> (/$bunfs/root/chunk-vn1rjvmw.js:25:5589)
+      at o7 (/$bunfs/root/chunk-vn1rjvmw.js:25:38715)
+      at <anonymous> (/$bunfs/root/chunk-pafwasff.js:4:78979)
+      at ~effect/Effect/successCont (/$bunfs/root/chunk-vn1rjvmw.js:25:17713)
+      at runLoop (/$bunfs/root/chunk-vn1rjvmw.js:25:2045)
+      at evaluate (/$bunfs/root/chunk-vn1rjvmw.js:25:1435)
+      at <anonymous> (/$bunfs/root/chunk-vn1rjvmw.js:25:5589)
+      at <anonymous> (/$bunfs/root/chunk-vky1wh7c.js:709:12941)
+

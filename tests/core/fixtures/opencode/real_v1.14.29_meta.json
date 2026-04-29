@@ -1,0 +1,21 @@
+{
+  "cli_name": "opencode",
+  "cli_version": "1.14.29",
+  "capture_date": "2026-04-28",
+  "captures": [
+    {
+      "name": "simple_session",
+      "command": "opencode run --format json \"Print exactly one short sentence.\"",
+      "exit_code": 0,
+      "stdout_lines": 7,
+      "notes": "Despite the synthetic-fixture assumption, --format json is actually JSONL. Events: step_start, text, tool_use (the model called bash to echo), step_finish (reason='tool-calls'), step_start, text, step_finish (reason='stop'). Tokens carried on step_finish.part.tokens with cache.read/write fields."
+    },
+    {
+      "name": "error_session",
+      "command": "opencode run --format json --model anthropic/no-such-model-xyz \"x\"",
+      "exit_code": 0,
+      "stdout_lines": 1,
+      "notes": "OpenCode exits 0 even when the model is not found. The single stdout line is an 'error' event; stderr carries a JS stack trace (ProviderModelNotFoundError). Parser must rely on the 'error' event, not on exit code."
+    }
+  ]
+}

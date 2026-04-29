@@ -1,101 +1,69 @@
-"""OpenCode JSON-document parser tests against synthetic fixtures."""
+"""OpenCode JSONL streaming parser tests against real v1.14.29 fixtures."""
 
 from __future__ import annotations
 
-import json
-import time
 from pathlib import Path
 
-from agentsurge.frontends import events as E
 from agentsurge.frontends.base import FrontendConfig, FrontendRunArtifacts
+from agentsurge.frontends.events import (
+    EVENT_ASSISTANT_TEXT_DELTA,
+    EVENT_ERROR,
+    EVENT_PARSER_UNKNOWN,
+    EVENT_SESSION_COMPLETED,
+    EVENT_SESSION_STARTED,
+    EVENT_TURN_COMPLETED,
+    EVENT_TURN_STARTED,
+    EVENT_USAGE_COMPLETED,
+)
 from agentsurge.frontends.opencode import OpenCodeEventParser, OpenCodeProvider
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "opencode"
 
 
-def _ts() -> float:
-    return time.monotonic()
-
-
-def _feed_file(parser: OpenCodeEventParser, path: Path) -> list:
+def test_parse_real_simple_session_v1_14_29():
+    """Real OpenCode 1.14.29 success-path: JSONL stream with step_start/text/tool_use/step_finish."""
+    fixture = FIXTURE_DIR / "real_simple_session_v1.14.29.jsonl"
+    parser = OpenCodeEventParser()
     events = []
-    for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
-        events.extend(parser.feed_stdout_line(line, _ts()))
-    return events
+    for line in fixture.read_text().splitlines():
+        if line.strip():
+            events.extend(parser.feed_stdout_line(line + "\n", ts_monotonic=0.0))
+    events.extend(parser.finish(0, 0.0))
+
+    kinds = [e.kind for e in events]
+    # Expected sequence:
+    # SESSION_STARTED (from first event), TURN_STARTED, ASSISTANT_TEXT_DELTA, PARSER_UNKNOWN (tool_use),
+    # TURN_COMPLETED (reason=tool-calls; no usage on this one), TURN_STARTED, ASSISTANT_TEXT_DELTA,
+    # TURN_COMPLETED + USAGE_COMPLETED + SESSION_COMPLETED (reason=stop).
+    assert kinds[0] == EVENT_SESSION_STARTED
+    assert kinds.count(EVENT_TURN_STARTED) == 2
+    assert kinds.count(EVENT_ASSISTANT_TEXT_DELTA) == 2
+    assert EVENT_PARSER_UNKNOWN in kinds  # tool_use
+    assert kinds.count(EVENT_TURN_COMPLETED) == 2
+    assert kinds.count(EVENT_USAGE_COMPLETED) == 1  # only on final step_finish
+    assert kinds.count(EVENT_SESSION_COMPLETED) == 1
+
+    usage_event = next(e for e in events if e.kind == EVENT_USAGE_COMPLETED)
+    assert usage_event.usage["input_tokens"] == 78
+    assert usage_event.usage["output_tokens"] == 25
+    assert usage_event.usage["cache_read"] == 13328
+    assert usage_event.usage["cache_write"] == 0
 
 
-def test_parse_simple_session():
+def test_parse_real_error_session_v1_14_29():
+    """Real OpenCode 1.14.29 error-path: single 'error' event line."""
+    fixture = FIXTURE_DIR / "real_error_session_v1.14.29.jsonl"
     parser = OpenCodeEventParser()
-    streaming_events = _feed_file(parser, FIXTURE_DIR / "simple_session.json")
-    assert streaming_events == []
-    events = parser.finish(0, 1.0)
-    kinds = [ev.kind for ev in events]
-    assert kinds == [
-        E.EVENT_SESSION_STARTED,
-        E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
-        E.EVENT_USAGE_COMPLETED,
-        E.EVENT_SESSION_COMPLETED,
-    ]
-    assert events[1].text_delta == "hello there"
-    assert events[2].usage == {"input_tokens": 10, "output_tokens": 3}
+    events = []
+    for line in fixture.read_text().splitlines():
+        if line.strip():
+            events.extend(parser.feed_stdout_line(line + "\n", ts_monotonic=0.0))
+    events.extend(parser.finish(0, 0.0))  # opencode exits 0 even on error
 
-
-def test_parse_error_session():
-    parser = OpenCodeEventParser()
-    _feed_file(parser, FIXTURE_DIR / "error_session.json")
-    events = parser.finish(0, 1.0)
-    kinds = [ev.kind for ev in events]
-    assert kinds == [E.EVENT_SESSION_STARTED, E.EVENT_ERROR]
-    raw = events[1].raw
-    assert isinstance(raw, dict)
-    assert raw["error"] == "rate limited by upstream provider"
-
-
-def test_parse_no_streaming_events_during_feed():
-    parser = OpenCodeEventParser()
-    text = (FIXTURE_DIR / "simple_session.json").read_text(encoding="utf-8")
-    for line in text.splitlines(keepends=True):
-        result = parser.feed_stdout_line(line, _ts())
-        assert result == []
-    events = parser.finish(0, 1.0)
-    assert len(events) > 0
-
-
-def test_parse_malformed_json_emits_parser_error_on_finish():
-    parser = OpenCodeEventParser()
-    _feed_file(parser, FIXTURE_DIR / "malformed.json")
-    events = parser.finish(0, 1.0)
-    assert len(events) == 1
-    assert events[0].kind == E.EVENT_PARSER_ERROR
-    raw = events[0].raw
-    assert isinstance(raw, str)
-    assert "oc-bad" in raw
-
-
-def test_parse_empty_finish():
-    parser = OpenCodeEventParser()
-    events = parser.finish(0, 0.0)
-    assert events == []
-
-
-def test_parse_no_assistant_messages():
-    parser = OpenCodeEventParser()
-    payload = json.dumps(
-        {
-            "session_id": "oc-empty",
-            "messages": [],
-            "usage": {"input_tokens": 5, "output_tokens": 0},
-            "error": None,
-        }
-    )
-    parser.feed_stdout_line(payload, 0.0)
-    events = parser.finish(0, 1.0)
-    kinds = [ev.kind for ev in events]
-    assert kinds == [
-        E.EVENT_SESSION_STARTED,
-        E.EVENT_USAGE_COMPLETED,
-        E.EVENT_SESSION_COMPLETED,
-    ]
+    kinds = [e.kind for e in events]
+    assert kinds == [EVENT_SESSION_STARTED, EVENT_ERROR]
+    error_event = events[1]
+    assert "no-such-model-xyz" in error_event.raw["error"]["data"]["message"]
 
 
 def _make_artifacts(tmp_path: Path) -> FrontendRunArtifacts:

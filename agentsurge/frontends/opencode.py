@@ -1,10 +1,12 @@
-"""OpenCode CLI provider and JSON-document event parser.
+"""OpenCode CLI provider and JSONL streaming event parser.
 
-OpenCode's `--format json` emits a single JSON document on completion,
-not a stream. This parser buffers stdout and parses on finish(). The
-parser is exercised against synthetic fixtures only; real fixture
-capture against an installed OpenCode CLI is required before this
-provider is wired into FrontendSessionRenderer."""
+OpenCode 1.14.29 `--format json` actually emits JSONL (one event per
+line), not a single JSON document as the synthetic fixtures originally
+assumed. Real-fixture-validated event types: step_start, text,
+tool_use, step_finish, error. The parser maps them to canonical
+FrontendEvents in a streaming line-by-line model that mirrors the
+Codex parser. See tests/core/fixtures/opencode/real_v1.14.29_meta.json
+for the captured ground truth."""
 
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
@@ -21,16 +23,17 @@ from agentsurge.frontends.base import (
 from agentsurge.frontends.render import render_session
 from agentsurge.types import ReplaySession
 
-# Schema assumption (synthetic — real fixtures pending Phase 1.5):
-#   {
-#     "session_id": str,
-#     "messages": [{"role": "user|assistant", "content": str}, ...],
-#     "usage": {"input_tokens": int, "output_tokens": int} | null,
-#     "error": str | null
-#   }
-# The parser maps this document to canonical FrontendEvents on finish().
-# When real OpenCode `--format json` output is captured, this schema and
-# the dispatch logic below must be re-validated.
+# Real OpenCode 1.14.29 schema (see tests/core/fixtures/opencode/*.jsonl):
+#   {"type": "step_start"|"text"|"tool_use"|"step_finish"|"error",
+#    "timestamp": int, "sessionID": str, "part": {...}}
+# - step_start          -> EVENT_TURN_STARTED
+# - text                -> EVENT_ASSISTANT_TEXT_DELTA  (part.text)
+# - tool_use            -> EVENT_PARSER_UNKNOWN        (no canonical kind yet)
+# - step_finish         -> EVENT_TURN_COMPLETED;
+#                          if part.reason == "stop", also EVENT_USAGE_COMPLETED
+#                          (normalized from part.tokens) and EVENT_SESSION_COMPLETED
+# - error               -> EVENT_ERROR
+# EVENT_SESSION_STARTED is emitted lazily on the first event seen.
 
 
 class OpenCodeProvider:
@@ -85,85 +88,120 @@ class OpenCodeEventParser:
 
     def __init__(self) -> None:
         self._buffer: str = ""
+        self._session_started_emitted: bool = False
+        self._session_id: str | None = None
 
     def feed_stdout_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:
-        # OpenCode emits a single JSON document at completion, not a stream.
-        # Accumulate and defer all parsing to finish().
+        events: list[FrontendEvent] = []
         self._buffer += line
-        return []
+        while "\n" in self._buffer:
+            segment, self._buffer = self._buffer.split("\n", 1)
+            segment = segment.rstrip("\r")
+            if not segment.strip():
+                continue
+            try:
+                parsed = json.loads(segment)
+            except json.JSONDecodeError:
+                events.append(
+                    FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_ERROR, raw=segment)
+                )
+                continue
+            if not isinstance(parsed, dict):
+                events.append(
+                    FrontendEvent(
+                        ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed
+                    )
+                )
+                continue
+            events.extend(self._dispatch(parsed, ts_monotonic))
+        return events
 
     def feed_stderr_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:
         return []
 
     def finish(self, exit_code: int, ts_monotonic: float) -> list[FrontendEvent]:
-        if not self._buffer:
-            return []
-
-        buffer = self._buffer
-        self._buffer = ""
-
-        try:
-            parsed = json.loads(buffer)
-        except json.JSONDecodeError:
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_ERROR, raw=buffer)]
-
-        if not isinstance(parsed, dict):
-            return [
-                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed)
-            ]
-
         events: list[FrontendEvent] = []
-        session_id = parsed.get("session_id")
-        events.append(
-            FrontendEvent(
-                ts_monotonic=ts_monotonic,
-                kind=E.EVENT_SESSION_STARTED,
-                raw={"session_id": session_id},
+        if self._buffer.strip():
+            events.append(
+                FrontendEvent(
+                    ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_ERROR, raw=self._buffer
+                )
             )
-        )
+        self._buffer = ""
+        return events
 
-        messages = parsed.get("messages")
-        if isinstance(messages, list):
-            for msg in messages:
-                if not isinstance(msg, dict):
-                    continue
-                if msg.get("role") != "assistant":
-                    continue
-                content = msg.get("content", "")
-                text_delta = content if isinstance(content, str) else ""
+    def _dispatch(self, parsed: dict, ts_monotonic: float) -> list[FrontendEvent]:
+        events: list[FrontendEvent] = []
+        if not self._session_started_emitted:
+            self._session_id = parsed.get("sessionID")
+            events.append(
+                FrontendEvent(
+                    ts_monotonic=ts_monotonic,
+                    kind=E.EVENT_SESSION_STARTED,
+                    raw={"session_id": self._session_id},
+                )
+            )
+            self._session_started_emitted = True
+
+        kind = parsed.get("type")
+        if kind == "step_start":
+            events.append(
+                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_STARTED, raw=parsed)
+            )
+        elif kind == "text":
+            part = parsed.get("part", {}) or {}
+            text = part.get("text", "") if isinstance(part, dict) else ""
+            events.append(
+                FrontendEvent(
+                    ts_monotonic=ts_monotonic,
+                    kind=E.EVENT_ASSISTANT_TEXT_DELTA,
+                    text_delta=text,
+                    raw=parsed,
+                )
+            )
+        elif kind == "tool_use":
+            events.append(
+                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed)
+            )
+        elif kind == "step_finish":
+            events.append(
+                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_COMPLETED, raw=parsed)
+            )
+            part = parsed.get("part", {}) or {}
+            reason = part.get("reason") if isinstance(part, dict) else None
+            if reason == "stop":
+                tokens = part.get("tokens", {}) if isinstance(part, dict) else {}
+                if not isinstance(tokens, dict):
+                    tokens = {}
+                cache = tokens.get("cache", {}) or {}
+                if not isinstance(cache, dict):
+                    cache = {}
+                normalized_usage: dict = {
+                    "input_tokens": tokens.get("input", 0),
+                    "output_tokens": tokens.get("output", 0),
+                }
+                if "reasoning" in tokens:
+                    normalized_usage["reasoning"] = tokens["reasoning"]
+                if "read" in cache or "write" in cache:
+                    normalized_usage["cache_read"] = cache.get("read", 0)
+                    normalized_usage["cache_write"] = cache.get("write", 0)
                 events.append(
                     FrontendEvent(
                         ts_monotonic=ts_monotonic,
-                        kind=E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
-                        text_delta=text_delta,
-                        raw=msg,
+                        kind=E.EVENT_USAGE_COMPLETED,
+                        usage=normalized_usage,
+                        raw=parsed,
                     )
                 )
-
-        error = parsed.get("error")
-        if error:
-            events.append(
-                FrontendEvent(
-                    ts_monotonic=ts_monotonic,
-                    kind=E.EVENT_ERROR,
-                    raw={"error": error},
+                events.append(
+                    FrontendEvent(
+                        ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_COMPLETED, raw=parsed
+                    )
                 )
-            )
-            return events
-
-        usage_raw = parsed.get("usage")
-        if isinstance(usage_raw, dict):
-            usage = {k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))}
+        elif kind == "error":
+            events.append(FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=parsed))
+        else:
             events.append(
-                FrontendEvent(
-                    ts_monotonic=ts_monotonic,
-                    kind=E.EVENT_USAGE_COMPLETED,
-                    usage=usage,
-                    raw=usage_raw,
-                )
+                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed)
             )
-
-        events.append(
-            FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_COMPLETED, raw=parsed)
-        )
         return events
