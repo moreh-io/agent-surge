@@ -19,30 +19,40 @@ from tests.integration.conftest import _REAL_CLI_SKIP, run_agentsurge
 
 
 @_REAL_CLI_SKIP
-def test_opencode_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> None:
+def test_opencode_4_concurrent_smoke(
+    tmp_path: Path, vllm_env: dict[str, str], translator_shim: str
+) -> None:
     """4 concurrent OpenCode sessions must complete without WAL corruption.
 
     XDG_DATA_HOME isolation (Task 4) gives each session its own SQLite DB
     under <session_dir>/xdg/opencode/. Without that fix the shared
     ~/.local/share/opencode/opencode.db-{shm,wal} corrupts when two or
     more sessions run concurrently.
+
+    OpenCode is routed through translator_shim too (not just Codex) so the
+    proxy can strip ``tools`` from /v1/chat/completions and pin
+    ``tool_choice="none"``. Without that, OpenCode advertises its 12
+    built-in tools and qwen3.6 loops on tool execution until session_
+    timeout fires (2026-04-29 mi250-069 4-concurrent: 100% timeouts at
+    600 s before the chat-completions tool-strip landed).
     """
     workspace = tmp_path / "ws"
     output = tmp_path / "results"
     proc = run_agentsurge(
         frontend="opencode",
         model=f"vllm/{vllm_env['model']}",
-        server_url=vllm_env["url"],
+        server_url=translator_shim,
         api_key_env_pair=f"OPENAI_API_KEY={vllm_env['api_key']}",
         workspace_dir=workspace,
         output_dir=output,
         n_sessions=4,
         concurrency=4,
-        # 600 s rather than 300: under 4-concurrent vLLM load qwen3.6-27b
-        # serves requests serially per session, and the synthetic prompt's
-        # ~13 K input tokens make each turn ~30-60 s. 300 s left several
-        # sessions still queued at timeout on 2026-04-29 mi250-069.
-        session_timeout=600,
+        # 1500 s: standalone OpenCode against this vLLM takes ~2 min for
+        # the 80 KB synthetic prompt (54 K input tokens). Under 4-concurrent
+        # contention each session can take 5-10 min. 600 s timed out
+        # mid-response on 2026-04-29 mi250-069. 1500 s gives generous
+        # headroom while still failing eventually if a session truly hangs.
+        session_timeout=1500,
     )
     assert proc.returncode == 0, (
         f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
@@ -90,11 +100,12 @@ def test_claude_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> 
         output_dir=output,
         n_sessions=4,
         concurrency=4,
-        # 600 s rather than 300: under 4-concurrent vLLM load qwen3.6-27b
-        # serves requests serially per session, and the synthetic prompt's
-        # ~13 K input tokens make each turn ~30-60 s. 300 s left several
-        # sessions still queued at timeout on 2026-04-29 mi250-069.
-        session_timeout=600,
+        # 1500 s: standalone OpenCode against this vLLM takes ~2 min for
+        # the 80 KB synthetic prompt (54 K input tokens). Under 4-concurrent
+        # contention each session can take 5-10 min. 600 s timed out
+        # mid-response on 2026-04-29 mi250-069. 1500 s gives generous
+        # headroom while still failing eventually if a session truly hangs.
+        session_timeout=1500,
     )
     assert proc.returncode == 0, (
         f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
@@ -133,11 +144,12 @@ def test_codex_4_concurrent_smoke_via_translator(
         output_dir=output,
         n_sessions=4,
         concurrency=4,
-        # 600 s rather than 300: under 4-concurrent vLLM load qwen3.6-27b
-        # serves requests serially per session, and the synthetic prompt's
-        # ~13 K input tokens make each turn ~30-60 s. 300 s left several
-        # sessions still queued at timeout on 2026-04-29 mi250-069.
-        session_timeout=600,
+        # 1500 s: standalone OpenCode against this vLLM takes ~2 min for
+        # the 80 KB synthetic prompt (54 K input tokens). Under 4-concurrent
+        # contention each session can take 5-10 min. 600 s timed out
+        # mid-response on 2026-04-29 mi250-069. 1500 s gives generous
+        # headroom while still failing eventually if a session truly hangs.
+        session_timeout=1500,
     )
     assert proc.returncode == 0, (
         f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"

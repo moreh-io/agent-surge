@@ -136,6 +136,36 @@ def _rewrite_responses_body(raw: bytes) -> bytes:
     return json.dumps(obj).encode("utf-8")
 
 
+def _rewrite_chat_completions_body(raw: bytes) -> bytes:
+    """Force tool calls off in a Chat-Completions request body.
+
+    OpenCode talks /v1/chat/completions directly. With its built-in tools
+    (bash/edit/grep/...) advertised, qwen3.6 invokes them on the synthetic
+    code-dump prompts and OpenCode loops on tool-execution turns until the
+    session_timeout fires (2026-04-29 mi250-069 4-concurrent smoke: 100%
+    timeouts at 600 s). Stripping ``tools`` and pinning ``tool_choice`` to
+    ``"none"`` here guarantees the model can't initiate a tool call no
+    matter what the client declared.
+
+    Preserves the body byte-for-byte if it isn't valid JSON, isn't a JSON
+    object, or already has tools off — the upstream surfaces schema errors
+    more clearly than this shim ever could.
+    """
+    if not raw:
+        return raw
+    try:
+        obj: Any = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if not isinstance(obj, dict):
+        return raw
+    if obj.get("tool_choice") == "none" and obj.get("tools") in (None, []):
+        return raw
+    obj["tool_choice"] = "none"
+    obj["tools"] = []
+    return json.dumps(obj).encode("utf-8")
+
+
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     upstream_base = request.app[UPSTREAM_BASE]
     timeout_s = request.app[TIMEOUT_S]
@@ -143,6 +173,8 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     body = await request.read()
     if request.method == "POST" and request.path == "/v1/responses":
         body = _rewrite_responses_body(body)
+    elif request.method == "POST" and request.path == "/v1/chat/completions":
+        body = _rewrite_chat_completions_body(body)
 
     forwarded_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
 

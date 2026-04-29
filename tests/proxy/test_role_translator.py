@@ -210,19 +210,66 @@ async def test_responses_no_developer_role_unchanged():
         assert forwarded_roles == ["user"]
 
 
-async def test_chat_completions_passes_through_unchanged():
-    """Only POST /v1/responses gets rewritten; other endpoints are
-    untouched even if they happen to contain developer roles."""
+async def test_chat_completions_messages_passthrough():
+    """The /v1/chat/completions handler does not rewrite message roles —
+    that's a Responses-API concern. ``messages`` and ``model`` reach
+    upstream as-is."""
     async with _proxy_under_test() as (proxy_url, captured):
         body = {
             "model": "qwen3.6-27b",
-            "messages": [{"role": "developer", "content": "x"}],
+            "messages": [
+                {"role": "system", "content": "be brief"},
+                {"role": "user", "content": "hi"},
+            ],
         }
         async with aiohttp.ClientSession() as client:
             resp = await client.post(f"{proxy_url}/v1/chat/completions", json=body)
             assert resp.status == 200
-        msgs = captured[0]["body"]["messages"]
-        assert msgs[0]["role"] == "developer"
+        forwarded = captured[0]["body"]
+        assert forwarded["messages"] == body["messages"]
+        assert forwarded["model"] == body["model"]
+
+
+async def test_chat_completions_tool_calls_force_disabled():
+    """OpenCode advertises 12 built-in tools on every chat/completions
+    request and the model loops on tool execution. The proxy strips
+    ``tools`` and pins ``tool_choice`` to ``"none"`` so the model can't
+    initiate a tool call regardless of what the client declared."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"type": "function", "function": {"name": "bash"}},
+                {"type": "function", "function": {"name": "edit"}},
+            ],
+            "tool_choice": "auto",
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/chat/completions", json=body)
+            assert resp.status == 200
+        forwarded = captured[0]["body"]
+        assert forwarded["tool_choice"] == "none"
+        assert forwarded["tools"] == []
+        # Other fields untouched.
+        assert forwarded["messages"] == body["messages"]
+
+
+async def test_chat_completions_already_tools_off_unchanged():
+    """If the client already has tools off, the body forwards byte-equal —
+    no spurious mutation."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tool_choice": "none",
+            "tools": [],
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/chat/completions", json=body)
+            assert resp.status == 200
+        forwarded = captured[0]["body"]
+        assert forwarded == body
 
 
 async def test_get_passes_through():
