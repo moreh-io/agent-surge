@@ -102,7 +102,15 @@ class ClaudeProvider:
         # User must supply ANTHROPIC_API_KEY via --frontend-extra-env or shell
         # env. We don't synthesize a key because vLLM-style targets ignore it
         # and real Anthropic-compatible gateways have user-specific auth.
-        env = {"ANTHROPIC_BASE_URL": config.server_url.rstrip("/")}
+        #
+        # Strip a trailing `/v1` because Claude Code always appends
+        # `/v1/messages` itself. Users typically pass the same OpenAI-style
+        # base URL (`.../v1`) used by Codex/OpenCode, so without this strip
+        # requests land at `/v1/v1/messages` and the upstream 404s.
+        base_url = config.server_url.rstrip("/")
+        if base_url.endswith("/v1"):
+            base_url = base_url[: -len("/v1")]
+        env = {"ANTHROPIC_BASE_URL": base_url}
         # Mirror the user's ANTHROPIC_API_KEY into ANTHROPIC_AUTH_TOKEN: Claude
         # Code 2.1.x sends ANTHROPIC_API_KEY as the x-api-key header, but
         # OpenAI-compatible targets (vLLM `/v1/messages`) only accept

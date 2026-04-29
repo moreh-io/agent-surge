@@ -202,9 +202,18 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 def make_app(upstream_base: str, timeout_s: float = 600.0) -> web.Application:
     """Build the aiohttp app. `upstream_base` is the URL prefix the proxy
     forwards every request to (e.g. `http://127.0.0.1:18000`). `timeout_s`
-    is the per-request total timeout for the upstream call."""
+    is the per-request total timeout for the upstream call.
+
+    A trailing ``/v1`` is stripped because every CLI client that talks to
+    this shim (Codex, OpenCode, Claude) already includes ``/v1/...`` in its
+    request path. Without this, users who pass the same OpenAI-compat base
+    URL they hand to other tools land at ``/v1/v1/responses`` and 404.
+    """
+    normalized = upstream_base.rstrip("/")
+    if normalized.endswith("/v1"):
+        normalized = normalized[: -len("/v1")]
     app = web.Application()
-    app[UPSTREAM_BASE] = upstream_base
+    app[UPSTREAM_BASE] = normalized
     app[TIMEOUT_S] = timeout_s
     app.router.add_route("*", "/{path:.*}", _proxy_handler)
     return app

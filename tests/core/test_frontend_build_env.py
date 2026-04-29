@@ -91,6 +91,17 @@ def test_claude_build_env_sets_base_url(tmp_path: Path) -> None:
     assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:18000"
 
 
+def test_claude_build_env_strips_v1_suffix(tmp_path: Path) -> None:
+    """Claude Code unconditionally appends `/v1/messages` to ANTHROPIC_BASE_URL,
+    so a user-supplied OpenAI-style `.../v1` base must be reduced to the bare
+    host or requests land at `/v1/v1/messages` and 404."""
+    env = ClaudeProvider().build_env(
+        _artifacts(tmp_path / "s"),
+        _config(server_url="http://127.0.0.1:18000/v1"),
+    )
+    assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:18000"
+
+
 def test_claude_build_env_mirrors_api_key_into_auth_token(tmp_path: Path) -> None:
     """vLLM /v1/messages only accepts Authorization Bearer (populated from
     ANTHROPIC_AUTH_TOKEN); without this mirror every request 401's."""

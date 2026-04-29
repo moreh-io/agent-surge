@@ -309,3 +309,33 @@ async def test_authorization_header_forwarded():
             )
             assert resp.status == 200
         assert captured[0]["headers"].get("Authorization") == "Bearer test-token-42"
+
+
+async def test_make_app_strips_trailing_v1_from_upstream_base():
+    """Users typically pass the same OpenAI-compat base URL (`.../v1`) to the
+    translator that they hand to Codex/OpenCode. Since every CLI client
+    already includes `/v1/...` in its request path, the translator must
+    strip a trailing `/v1` from upstream_base or the forwarded URL would
+    double-prefix to `/v1/v1/responses` and 404 at the upstream."""
+    upstream_app, captured = _make_upstream_capture()
+    upstream_server = TestServer(upstream_app)
+    await upstream_server.start_server()
+    bare = f"http://{upstream_server.host}:{upstream_server.port}"
+
+    proxy_app = make_app(upstream_base=bare + "/v1", timeout_s=10.0)
+    proxy_server = TestServer(proxy_app)
+    await proxy_server.start_server()
+    proxy_url = f"http://{proxy_server.host}:{proxy_server.port}"
+
+    try:
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(
+                f"{proxy_url}/v1/responses",
+                json={"input": [{"role": "user", "content": "x"}]},
+            )
+            assert resp.status == 200
+        # The upstream must have seen exactly /v1/responses, not /v1/v1/responses.
+        assert captured[0]["path"] == "/v1/responses"
+    finally:
+        await proxy_server.close()
+        await upstream_server.close()
