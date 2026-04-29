@@ -77,6 +77,14 @@ class ClaudeProvider:
         )
         if config.model is not None:
             cmd.extend(["--model", config.model])
+        # `--` stops yargs from interpreting subsequent args as flag values.
+        # Without it, ``--allowedTools <tools...>`` is variadic and greedily
+        # consumes the prompt positional that follows when no later flag
+        # (e.g. ``--model``) intervenes — Claude then errors with
+        # "Input must be provided either through stdin or as a prompt
+        # argument when using --print" (single-session smoke regression
+        # caught this on 2026-04-29 when config.model was None).
+        cmd.append("--")
         cmd.append(
             f"Read {prompt_path} and complete the AgentSurge session "
             f"described there. Respond with text only — do not call any "

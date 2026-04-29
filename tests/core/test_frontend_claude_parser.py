@@ -161,6 +161,7 @@ def test_claude_provider_build_command_default(tmp_path: Path):
         "--include-partial-messages",
         "--allowedTools",
         "",
+        "--",
         f"Read {prompt_path} and complete the AgentSurge session "
         f"described there.{_NO_TOOLS_MESSAGE_SUFFIX}",
     ]
@@ -181,6 +182,7 @@ def test_claude_provider_build_command_with_model(tmp_path: Path):
         "",
         "--model",
         "claude-opus-4-7",
+        "--",
         f"Read {prompt_path} and complete the AgentSurge session "
         f"described there.{_NO_TOOLS_MESSAGE_SUFFIX}",
     ]
