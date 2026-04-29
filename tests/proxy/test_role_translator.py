@@ -90,3 +90,72 @@ async def test_responses_developer_role_rewritten_to_system():
         forwarded = captured[0]["body"]
         roles = [m["role"] for m in forwarded["input"]]
         assert roles == ["system", "user"], f"expected developer→system rewrite, got {roles}"
+
+
+async def test_responses_no_developer_role_unchanged():
+    """A Responses request without any developer role must pass through
+    byte-equivalently — no spurious mutations."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "input": [{"role": "user", "content": "hi"}],
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/responses", json=body)
+            assert resp.status == 200
+        forwarded_roles = [m["role"] for m in captured[0]["body"]["input"]]
+        assert forwarded_roles == ["user"]
+
+
+async def test_chat_completions_passes_through_unchanged():
+    """Only POST /v1/responses gets rewritten; other endpoints are
+    untouched even if they happen to contain developer roles."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "messages": [{"role": "developer", "content": "x"}],
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/chat/completions", json=body)
+            assert resp.status == 200
+        msgs = captured[0]["body"]["messages"]
+        assert msgs[0]["role"] == "developer"
+
+
+async def test_get_passes_through():
+    async with _proxy_under_test() as (proxy_url, captured):
+        async with aiohttp.ClientSession() as client:
+            resp = await client.get(f"{proxy_url}/v1/models")
+            assert resp.status == 200
+        assert captured[0]["method"] == "GET"
+        assert captured[0]["path"] == "/v1/models"
+
+
+async def test_malformed_json_body_passes_through():
+    """Garbage in the body should not crash the proxy — upstream surfaces
+    the schema error itself."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(
+                f"{proxy_url}/v1/responses",
+                data=b"this is not json",
+                headers={"Content-Type": "application/json"},
+            )
+            assert resp.status == 200
+        forwarded = captured[0]["body"]
+        assert forwarded.get("_raw") == "this is not json"
+
+
+async def test_authorization_header_forwarded():
+    """Auth headers must reach the upstream so the API key/token gets
+    delivered. Without this the proxy would force every request to be
+    keyless."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(
+                f"{proxy_url}/v1/responses",
+                json={"input": [{"role": "user", "content": "x"}]},
+                headers={"Authorization": "Bearer test-token-42"},
+            )
+            assert resp.status == 200
+        assert captured[0]["headers"].get("Authorization") == "Bearer test-token-42"
