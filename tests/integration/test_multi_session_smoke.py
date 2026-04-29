@@ -64,3 +64,38 @@ def test_opencode_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -
         assert (sd / "xdg").is_dir(), f"missing xdg/ in {sd}"
         assert (sd / "opencode.json").is_file()
         assert (sd / "stdout.jsonl").stat().st_size > 0, f"empty stdout in {sd}"
+
+
+@_REAL_CLI_SKIP
+def test_claude_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> None:
+    """4 concurrent Claude sessions must complete via vLLM /v1/messages.
+
+    Claude isolation relies on `--bare` (suppresses OAuth/keychain/plugins)
+    plus the ANTHROPIC_API_KEY → ANTHROPIC_AUTH_TOKEN mirror in
+    ClaudeProvider.build_env so the vLLM endpoint receives a Bearer token
+    rather than the x-api-key header it ignores.
+    """
+    workspace = tmp_path / "ws"
+    output = tmp_path / "results"
+    proc = run_agentsurge(
+        frontend="claude",
+        model=vllm_env["model"],
+        server_url=vllm_env["url"],
+        api_key_env_pair=f"ANTHROPIC_API_KEY={vllm_env['api_key']}",
+        workspace_dir=workspace,
+        output_dir=output,
+        n_sessions=4,
+        concurrency=4,
+        session_timeout=300,
+    )
+    assert proc.returncode == 0, (
+        f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
+    )
+    assert "4 (4 completed)" in proc.stdout, (
+        f"expected 4 of 4 sessions complete; stdout was:\n{proc.stdout}"
+    )
+    sessions_dir = workspace / "sessions"
+    session_subdirs = sorted(sessions_dir.iterdir())
+    assert len(session_subdirs) == 4
+    for sd in session_subdirs:
+        assert (sd / "stdout.jsonl").stat().st_size > 0, f"empty stdout in {sd}"
