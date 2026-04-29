@@ -173,6 +173,28 @@ async def test_responses_typed_content_parts_extracted():
         assert [m["role"] for m in forwarded["input"]] == ["user"]
 
 
+async def test_responses_tool_calls_force_disabled():
+    """Codex declares 11 tools and tool_choice=auto. Even with the prompt
+    nudging "no tools", qwen3.6 still invokes exec_command on coding
+    prompts; the second-turn body that codex sends back then contains
+    function_call/function_call_output items that vLLM's Responses
+    adapter rejects with 215 pydantic errors. The translator forces
+    tool_choice="none" and tools=[] so the loop never starts."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "input": [{"role": "user", "content": "hi"}],
+            "tools": [{"type": "function", "name": "exec_command"}],
+            "tool_choice": "auto",
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/responses", json=body)
+            assert resp.status == 200
+        forwarded = captured[0]["body"]
+        assert forwarded["tool_choice"] == "none"
+        assert forwarded["tools"] == []
+
+
 async def test_responses_no_developer_role_unchanged():
     """A Responses request without any developer role must pass through
     byte-equivalently — no spurious mutations."""

@@ -107,9 +107,6 @@ def _rewrite_responses_body(raw: bytes) -> bytes:
         else:
             kept.append(msg)
 
-    if not system_chunks:
-        return raw
-
     existing = obj.get("instructions")
     if existing is not None and not isinstance(existing, str):
         return raw
@@ -119,8 +116,23 @@ def _rewrite_responses_body(raw: bytes) -> bytes:
         if merged:
             merged += "\n\n"
         merged += chunk
+
+    # Force tool calls off. The harness measures CLI throughput, not
+    # agentic tool execution. Without this codex sees its 11 declared
+    # tools, decides the prompt warrants reading a file, calls
+    # exec_command, and the second-turn request body that codex sends
+    # back contains ``function_call``/``function_call_output`` items
+    # that vLLM's Responses-adapter rejects with 215 pydantic errors
+    # ("Input should be a valid string"). Setting tool_choice="none"
+    # and tools=[] stops the loop before it starts.
+    needs_tool_off = obj.get("tool_choice") != "none" or obj.get("tools") not in (None, [])
+    if not system_chunks and not needs_tool_off:
+        return raw
+
     obj["instructions"] = merged
     obj["input"] = kept
+    obj["tool_choice"] = "none"
+    obj["tools"] = []
     return json.dumps(obj).encode("utf-8")
 
 
