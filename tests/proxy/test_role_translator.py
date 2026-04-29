@@ -92,6 +92,38 @@ async def test_responses_developer_role_rewritten_to_system():
         assert roles == ["system", "user"], f"expected developer→system rewrite, got {roles}"
 
 
+async def test_responses_system_messages_reordered_to_front():
+    """Qwen 3.6's chat template enforces "system message must be at the
+    beginning". After developer→system rewrite, the rewritten message must
+    float to the front of input[] (relative order among system messages
+    preserved). Concrete failure: 2026-04-29 mi250-069 E2E run hit HTTP
+    400 on every Codex session because the rewritten system message stayed
+    after a user message."""
+    async with _proxy_under_test() as (proxy_url, captured):
+        body = {
+            "model": "qwen3.6-27b",
+            "input": [
+                {"role": "user", "content": "ctx"},
+                {"role": "developer", "content": "be brief"},
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "preamble"},
+            ],
+        }
+        async with aiohttp.ClientSession() as client:
+            resp = await client.post(f"{proxy_url}/v1/responses", json=body)
+            assert resp.status == 200
+        forwarded_input = captured[0]["body"]["input"]
+        roles = [m["role"] for m in forwarded_input]
+        assert roles == ["system", "system", "user", "user"], (
+            f"system messages must lead; got {roles}"
+        )
+        # Relative order among system messages must be preserved
+        # (rewritten developer comes before original system since that
+        # was the input order).
+        assert forwarded_input[0]["content"] == "be brief"
+        assert forwarded_input[1]["content"] == "preamble"
+
+
 async def test_responses_no_developer_role_unchanged():
     """A Responses request without any developer role must pass through
     byte-equivalently — no spurious mutations."""

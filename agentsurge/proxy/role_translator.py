@@ -51,9 +51,16 @@ TIMEOUT_S: web.AppKey[float] = web.AppKey("timeout_s", float)
 def _rewrite_responses_body(raw: bytes) -> bytes:
     """Rewrite developer→system roles inside a Responses-API request body.
 
-    Preserves the body byte-for-byte if it isn't valid JSON or if it
-    doesn't have the expected `input: [...]` shape — the upstream will
-    surface schema errors more clearly than this shim ever could.
+    Two transforms, both required for restrictive chat templates (Qwen 3.6
+    etc.) to accept the request:
+      1. ``developer`` role → ``system``.
+      2. All ``system`` messages — original and rewritten — float to the
+         front of ``input[]``, preserving relative order. Qwen 3.6 enforces
+         "system message must be at the beginning" and rejects 400 otherwise.
+
+    Preserves the body byte-for-byte if it isn't valid JSON or if it doesn't
+    have the expected ``input: [...]`` shape — the upstream surfaces schema
+    errors more clearly than this shim ever could.
     """
     if not raw:
         return raw
@@ -66,13 +73,17 @@ def _rewrite_responses_body(raw: bytes) -> bytes:
     inp = obj.get("input")
     if not isinstance(inp, list):
         return raw
-    mutated = False
+    rewrote_role = False
     for msg in inp:
         if isinstance(msg, dict) and msg.get("role") == "developer":
             msg["role"] = "system"
-            mutated = True
-    if not mutated:
+            rewrote_role = True
+    system_msgs = [m for m in inp if isinstance(m, dict) and m.get("role") == "system"]
+    other_msgs = [m for m in inp if not (isinstance(m, dict) and m.get("role") == "system")]
+    needs_reorder = inp[: len(system_msgs)] != system_msgs
+    if not rewrote_role and not needs_reorder:
         return raw
+    obj["input"] = system_msgs + other_msgs
     return json.dumps(obj).encode("utf-8")
 
 
