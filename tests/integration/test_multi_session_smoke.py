@@ -99,3 +99,51 @@ def test_claude_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> 
     assert len(session_subdirs) == 4
     for sd in session_subdirs:
         assert (sd / "stdout.jsonl").stat().st_size > 0, f"empty stdout in {sd}"
+
+
+@_REAL_CLI_SKIP
+def test_codex_4_concurrent_smoke_via_translator(
+    tmp_path: Path, vllm_env: dict[str, str], translator_shim: str
+) -> None:
+    """4 concurrent Codex sessions must complete via the role-translator.
+
+    Codex 0.125+ sends Responses-API requests with `role: "developer"`,
+    which Qwen 3.6's chat template rejects with HTTP 400. The
+    translator_shim fixture spawns `agentsurge proxy-translator` between
+    Codex and vLLM; it rewrites developer→system inside POST /v1/responses
+    bodies. The Codex --frontend-server-url points at the shim, not the
+    vLLM endpoint directly.
+    """
+    workspace = tmp_path / "ws"
+    output = tmp_path / "results"
+    proc = run_agentsurge(
+        frontend="codex",
+        model=vllm_env["model"],
+        server_url=translator_shim,
+        api_key_env_pair=f"OPENAI_API_KEY={vllm_env['api_key']}",
+        workspace_dir=workspace,
+        output_dir=output,
+        n_sessions=4,
+        concurrency=4,
+        session_timeout=300,
+    )
+    assert proc.returncode == 0, (
+        f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
+    )
+    assert "4 (4 completed)" in proc.stdout, (
+        f"expected 4 of 4 sessions complete; stdout was:\n{proc.stdout}"
+    )
+    sessions_dir = workspace / "sessions"
+    session_subdirs = sorted(sessions_dir.iterdir())
+    assert len(session_subdirs) == 4
+    # Each session must have an isolated CODEX_HOME with the rewritten
+    # config.toml pointing at the shim, not vLLM directly.
+    for sd in session_subdirs:
+        codex_home = sd / "codex_home"
+        assert codex_home.is_dir(), f"missing codex_home in {sd}"
+        config_toml = (codex_home / "config.toml").read_text()
+        assert translator_shim.rstrip("/") in config_toml, (
+            f"codex_home/config.toml in {sd} did not point at the shim "
+            f"({translator_shim}); contents:\n{config_toml}"
+        )
+        assert (sd / "stdout.jsonl").stat().st_size > 0
