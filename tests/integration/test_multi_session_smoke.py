@@ -38,7 +38,11 @@ def test_opencode_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -
         output_dir=output,
         n_sessions=4,
         concurrency=4,
-        session_timeout=300,
+        # 600 s rather than 300: under 4-concurrent vLLM load qwen3.6-27b
+        # serves requests serially per session, and the synthetic prompt's
+        # ~13 K input tokens make each turn ~30-60 s. 300 s left several
+        # sessions still queued at timeout on 2026-04-29 mi250-069.
+        session_timeout=600,
     )
     assert proc.returncode == 0, (
         f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
@@ -86,7 +90,11 @@ def test_claude_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> 
         output_dir=output,
         n_sessions=4,
         concurrency=4,
-        session_timeout=300,
+        # 600 s rather than 300: under 4-concurrent vLLM load qwen3.6-27b
+        # serves requests serially per session, and the synthetic prompt's
+        # ~13 K input tokens make each turn ~30-60 s. 300 s left several
+        # sessions still queued at timeout on 2026-04-29 mi250-069.
+        session_timeout=600,
     )
     assert proc.returncode == 0, (
         f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
@@ -125,7 +133,11 @@ def test_codex_4_concurrent_smoke_via_translator(
         output_dir=output,
         n_sessions=4,
         concurrency=4,
-        session_timeout=300,
+        # 600 s rather than 300: under 4-concurrent vLLM load qwen3.6-27b
+        # serves requests serially per session, and the synthetic prompt's
+        # ~13 K input tokens make each turn ~30-60 s. 300 s left several
+        # sessions still queued at timeout on 2026-04-29 mi250-069.
+        session_timeout=600,
     )
     assert proc.returncode == 0, (
         f"exit={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"

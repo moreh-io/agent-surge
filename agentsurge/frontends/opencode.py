@@ -96,27 +96,6 @@ class OpenCodeProvider:
                             "models": {model_name: {}},
                         }
                     },
-                    # Disable every built-in tool. The harness measures CLI
-                    # throughput, not agentic tool use. Without this opencode
-                    # advertises bash/edit/grep/etc. to the model and qwen3.6
-                    # loops on tool calls until session_timeout fires (2026-
-                    # 04-29 mi250-069 4-concurrent smoke: 100% timeouts at
-                    # 300 s even with the prompt-level "no tools" nudge).
-                    # Schema: tools is an open dict of <name>: bool.
-                    "tools": {
-                        "bash": False,
-                        "edit": False,
-                        "write": False,
-                        "read": False,
-                        "glob": False,
-                        "grep": False,
-                        "list": False,
-                        "patch": False,
-                        "task": False,
-                        "todoread": False,
-                        "todowrite": False,
-                        "webfetch": False,
-                    },
                 },
                 indent=2,
             )

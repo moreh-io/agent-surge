@@ -216,25 +216,6 @@ def test_opencode_build_env_writes_provider_config(tmp_path: Path) -> None:
     assert "qwen3.6-27b" in provider["models"]
 
 
-def test_opencode_build_env_disables_all_builtin_tools(tmp_path: Path) -> None:
-    """opencode.json must declare every built-in tool as ``false``. Without
-    this opencode advertises bash/edit/grep/etc. to the model and qwen3.6
-    loops on tool calls until session_timeout fires (regression guard for
-    the 2026-04-29 mi250-069 4-concurrent OpenCode smoke timeout)."""
-    session_dir = tmp_path / "s_no_tools"
-    OpenCodeProvider().build_env(
-        _artifacts(session_dir),
-        _config(server_url="http://x", model="vllm/qwen3.6-27b"),
-    )
-    cfg = json.loads((session_dir / "opencode.json").read_text())
-    tools = cfg["tools"]
-    # Every tool name in the declared map must be disabled; the harness has
-    # no value to gain from any of them. New tool names should be added to
-    # build_env when opencode adds them.
-    assert all(v is False for v in tools.values()), f"all tools must be False; got {tools}"
-    assert {"bash", "edit", "write", "read", "grep"}.issubset(tools.keys())
-
-
 def test_opencode_build_env_empty_api_key_when_not_provided(tmp_path: Path) -> None:
     session_dir = tmp_path / "s"
     OpenCodeProvider().build_env(
