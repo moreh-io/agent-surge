@@ -154,6 +154,15 @@ class FrontendSessionRenderer:
                         cwd=str(session_dir),
                         env=subprocess_env,
                         preexec_fn=os.setsid,
+                        # asyncio's StreamReader defaults to a 64 KB line
+                        # limit. Real CLIs emit single JSONL events that
+                        # easily exceed it (codex echoes its 45 KB merged
+                        # instructions back inside thread.started; claude
+                        # ships large stream_event blobs). Without this
+                        # bump readline() raises "Separator is found, but
+                        # chunk is longer than limit" mid-session — 3 of 4
+                        # codex sessions failed this way on 2026-04-29.
+                        limit=10 * 1024 * 1024,
                     )
                 except (FileNotFoundError, PermissionError) as exc:
                     # Spawn failed before we have a process; surface as a
