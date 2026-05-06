@@ -97,6 +97,29 @@ def _should_force_tools_off(obj: dict[str, Any]) -> bool:
     return obj.get("tool_choice") != "none" or obj.get("tools") not in (None, [])
 
 
+def _parse_responses_request(
+    raw: bytes,
+) -> tuple[dict[str, Any], list[Any], str | None] | None:
+    """Decode ``raw`` and return (obj, input_list, existing_instructions) or
+    ``None`` if the body should be passed through untouched (empty, non-JSON,
+    non-dict, missing/non-list ``input``, or non-string ``instructions``)."""
+    if not raw:
+        return None
+    try:
+        obj: Any = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    inp = obj.get("input")
+    if not isinstance(inp, list):
+        return None
+    existing = obj.get("instructions")
+    if existing is not None and not isinstance(existing, str):
+        return None
+    return obj, inp, existing
+
+
 def _rewrite_responses_body(raw: bytes) -> bytes:
     """Move every developer/system message in ``input[]`` into ``instructions``.
 
@@ -117,26 +140,13 @@ def _rewrite_responses_body(raw: bytes) -> bytes:
     ``input: [...]`` array, or doesn't contain any system-like messages — the
     upstream surfaces schema errors more clearly than this shim ever could.
     """
-    if not raw:
+    parsed = _parse_responses_request(raw)
+    if parsed is None:
         return raw
-    try:
-        obj: Any = json.loads(raw)
-    except json.JSONDecodeError:
-        return raw
-    if not isinstance(obj, dict):
-        return raw
-    inp = obj.get("input")
-    if not isinstance(inp, list):
-        return raw
-    existing = obj.get("instructions")
-    if existing is not None and not isinstance(existing, str):
-        return raw
-
+    obj, inp, existing = parsed
     chunks, kept = _partition_input_by_role(inp)
-    needs_tool_off = _should_force_tools_off(obj)
-    if not chunks and not needs_tool_off:
+    if not chunks and not _should_force_tools_off(obj):
         return raw
-
     obj["instructions"] = _merge_instructions(existing, chunks)
     obj["input"] = kept
     obj["tool_choice"] = "none"
