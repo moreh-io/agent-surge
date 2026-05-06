@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import Any
 
 from agentsurge.frontends import events as E
 from agentsurge.frontends.base import (
@@ -105,24 +106,37 @@ class EchoEventParser:
             obj = json.loads(stripped)
         except json.JSONDecodeError:
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_ERROR, raw=line)]
+        return self._dispatch(obj, ts_monotonic)
+
+    def _parse_usage(self, obj: dict[str, object]) -> dict[str, int] | None:
+        """Extract and coerce a usage dict from an object, or return None."""
+        u = obj.get("usage")
+        if not isinstance(u, dict):
+            return None
+        return {k: int(v) for k, v in u.items() if isinstance(v, (int, float))}
+
+    def _extract_event_fields(
+        self, kind: str, obj: dict[str, object]
+    ) -> tuple[str, dict[str, int] | None]:
+        """Return (text_delta, usage) for the given event kind."""
+        if kind == E.EVENT_ASSISTANT_TEXT_DELTA:
+            d = obj.get("delta", "")
+            return (d if isinstance(d, str) else ""), None
+        if kind == E.EVENT_ASSISTANT_MESSAGE_COMPLETED:
+            t = obj.get("text", "")
+            return (t if isinstance(t, str) else ""), None
+        if kind == E.EVENT_USAGE_COMPLETED:
+            return "", self._parse_usage(obj)
+        return "", None
+
+    def _dispatch(self, obj: Any, ts_monotonic: float) -> list[FrontendEvent]:
         if not isinstance(obj, dict):
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
         type_str = obj.get("type")
         kind = _TYPE_TO_KIND.get(type_str) if isinstance(type_str, str) else None
         if kind is None:
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
-        text_delta = ""
-        usage: dict[str, int] | None = None
-        if kind == E.EVENT_ASSISTANT_TEXT_DELTA:
-            d = obj.get("delta", "")
-            text_delta = d if isinstance(d, str) else ""
-        elif kind == E.EVENT_ASSISTANT_MESSAGE_COMPLETED:
-            t = obj.get("text", "")
-            text_delta = t if isinstance(t, str) else ""
-        elif kind == E.EVENT_USAGE_COMPLETED:
-            u = obj.get("usage")
-            if isinstance(u, dict):
-                usage = {k: int(v) for k, v in u.items() if isinstance(v, (int, float))}
+        text_delta, usage = self._extract_event_fields(kind, obj)
         return [
             FrontendEvent(
                 ts_monotonic=ts_monotonic,
