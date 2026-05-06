@@ -7,9 +7,16 @@ from agentsurge.frontends.base import FrontendRunArtifacts
 from agentsurge.types import ReplaySession
 
 
-def render_session(session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:
-    artifacts.session_dir.mkdir(parents=True, exist_ok=True)
+def _msg_content_text(msg: dict[str, object]) -> str:
+    """Return the plain-text representation of a message's content field."""
+    content = msg.get("content", "")
+    if isinstance(content, list):
+        return " ".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return str(content) if content else ""
 
+
+def _render_prompt(session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:
+    """Write the human-readable prompt.md artifact."""
     lines: list[str] = [f"# Session {session.session_id}", ""]
     for k, v in session.metadata.items():
         lines.append(f"{k}: {v}")
@@ -19,11 +26,7 @@ def render_session(session: ReplaySession, artifacts: FrontendRunArtifacts) -> N
         lines.append(f"## Turn {i}")
         for msg in turn_msgs:
             role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                text = " ".join(part.get("text", "") for part in content if isinstance(part, dict))
-            else:
-                text = str(content) if content else ""
+            text = _msg_content_text(msg)
             lines.append(f"{role}: {text}")
             tool_calls = msg.get("tool_calls")
             if tool_calls:
@@ -33,9 +36,18 @@ def render_session(session: ReplaySession, artifacts: FrontendRunArtifacts) -> N
 
     artifacts.prompt_path.write_text("\n".join(lines), encoding="utf-8")
 
+
+def _render_session_json(session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:
+    """Write the machine-readable session.json artifact."""
     payload = {
         "session_id": session.session_id,
         "metadata": session.metadata,
         "turn_messages": session.turn_messages,
     }
     artifacts.session_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def render_session(session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:
+    artifacts.session_dir.mkdir(parents=True, exist_ok=True)
+    _render_prompt(session, artifacts)
+    _render_session_json(session, artifacts)
