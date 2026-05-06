@@ -28,7 +28,11 @@ from agentsurge.types import ReplaySession
 #    "timestamp": int, "sessionID": str, "part": {...}}
 # - step_start          -> EVENT_TURN_STARTED
 # - text                -> EVENT_ASSISTANT_TEXT_DELTA  (part.text)
-# - tool_use            -> EVENT_PARSER_UNKNOWN        (no canonical kind yet)
+# - tool_use            -> EVENT_TOOL_USE_OBSERVED     (signal: RequestShim strips
+#                          `tools` from /v1/chat/completions so this type must
+#                          never appear in a benchmark run; its presence means the
+#                          shim was not in the request path or the strip logic
+#                          regressed — the run is contaminated)
 # - step_finish         -> EVENT_TURN_COMPLETED;
 #                          if part.reason == "stop", also EVENT_USAGE_COMPLETED
 #                          (normalized from part.tokens) and EVENT_SESSION_COMPLETED
@@ -258,6 +262,10 @@ class OpenCodeEventParser:
         elif kind == "error":
             events.append(FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=parsed))
         else:
+            # All real-fixture types (step_start, text, tool_use, step_finish, error)
+            # dispatch to a named kind above; no additional types route here from
+            # real_simple_session_v1.14.29.jsonl. Re-audit if a CLI version bump
+            # introduces a new type.
             events.append(
                 FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed)
             )

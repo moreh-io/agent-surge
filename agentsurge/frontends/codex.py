@@ -210,6 +210,10 @@ class CodexEventParser:
             # {"type":"error","status":N,"error":{"type":"...","message":"..."}}.
             # Pass through verbatim; downstream consumers parse if needed.
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=obj)]
+        # All real-fixture types (thread.started, turn.started, item.completed,
+        # turn.completed) currently dispatch to a named kind above; nothing from
+        # real_simple_session_v0.125.0.jsonl routes to PARSER_UNKNOWN.
+        # Re-audit if a CLI version bump introduces a new type.
         return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
 
     def feed_stderr_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:

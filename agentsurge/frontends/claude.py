@@ -162,6 +162,11 @@ class ClaudeEventParser:
             # Only system.subtype == "init" is the canonical session-init event.
             # Other subtypes (hook_started, hook_response, status, ...) are
             # session-management noise and route to PARSER_UNKNOWN.
+            #
+            # Real-fixture PARSER_UNKNOWN inventory (real_simple_session_v2.1.122.jsonl):
+            #   system/hook_started   — noise: Claude Code plugin/hook lifecycle, no bench signal.
+            #   system/hook_response  — noise: plugin hook reply, no bench signal.
+            #   system/status         — noise: CLI status advisory (e.g. "Thinking…"), no bench signal.
             subtype = obj.get("subtype")
             if subtype == "init":
                 return [
@@ -210,8 +215,20 @@ class ClaudeEventParser:
                             ts_monotonic=ts_monotonic, kind=E.EVENT_MESSAGE_START, raw=obj
                         )
                     ]
+            # Real-fixture PARSER_UNKNOWN inventory for stream_event subtypes:
+            #   stream_event/content_block_start — noise: Anthropic streaming protocol bracket
+            #                                      opening each text block; no bench signal.
+            #   stream_event/content_block_stop  — noise: Anthropic streaming protocol bracket
+            #                                      closing each text block; no bench signal.
+            #   stream_event/message_delta       — noise: carries stop_reason, but that is
+            #                                      redundant with result → EVENT_USAGE_COMPLETED
+            #                                      + EVENT_SESSION_COMPLETED already captured.
+            #   stream_event/message_stop        — noise: streaming protocol terminator;
+            #                                      no bench signal.
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
         if type_str == "rate_limit_event":
+            # noise: Anthropic throttling advisory; useful for ops monitoring
+            # but not for throughput benchmarking.
             return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
         if type_str == "result":
             # Branch: error results surface as EVENT_ERROR; success results
