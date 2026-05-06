@@ -153,6 +153,7 @@ class FrontendSessionRenderer:
             event_count = 0
             delta_count = 0
             failure_category: str | None = None
+            tool_use_observed = False
 
             stdout_f = artifacts.stdout_path.open("wb")
             try:
@@ -249,7 +250,7 @@ class FrontendSessionRenderer:
             async def _consume_stdout() -> None:
                 nonlocal first_event_t, first_assistant_text_t, last_assistant_text_t
                 nonlocal final_message_t, usage_dict, event_count, delta_count
-                nonlocal stdout_bytes_written, stdout_truncated
+                nonlocal stdout_bytes_written, stdout_truncated, tool_use_observed
                 assert proc.stdout is not None
                 while True:
                     line = await proc.stdout.readline()
@@ -290,6 +291,8 @@ class FrontendSessionRenderer:
                                 final_message_t = now
                         elif ev.kind == E.EVENT_USAGE_COMPLETED and ev.usage is not None:
                             usage_dict = dict(ev.usage)
+                        elif ev.kind == E.EVENT_TOOL_USE_OBSERVED:
+                            tool_use_observed = True
 
             async def _consume_stderr() -> None:
                 nonlocal stderr_bytes_written, stderr_truncated
@@ -353,6 +356,8 @@ class FrontendSessionRenderer:
 
             if failure_category is None and returncode is not None and returncode != 0:
                 failure_category = "nonzero_exit"
+            if failure_category is None and tool_use_observed:
+                failure_category = "tool_use_observed"
 
             process_wall_ms = (process_exit_t - process_spawn_t0) * 1000.0
 

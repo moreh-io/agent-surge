@@ -222,7 +222,7 @@ class OpenCodeEventParser:
             )
         elif kind == "tool_use":
             events.append(
-                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed)
+                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TOOL_USE_OBSERVED, raw=parsed)
             )
         elif kind == "step_finish":
             events.append(

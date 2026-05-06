@@ -18,6 +18,7 @@ EVENT_TURN_FAILED = "turn.failed"
 EVENT_ITEM_COMPLETED = "item.completed"
 EVENT_USER_MESSAGE = "user.message"
 EVENT_ERROR = "error"
+EVENT_TOOL_USE_OBSERVED = "tool_use.observed"
 
 
 def event_to_dict(event: FrontendEvent) -> dict[str, object]:

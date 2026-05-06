@@ -157,6 +157,10 @@ async def test_opencode_provider_wired(tmp_path: Path, monkeypatch):
     assert fm.provider == "opencode"
     assert fm.process_exit_code == 0
     assert fm.event_count > 0
-    assert fm.failure_category is None
+    # The captured fixture pre-dates RequestShim's tool-strip and contains a
+    # tool_use event; the parser/runner now correctly flag it as a failure
+    # category. Re-capturing the fixture against a shim-routed run would
+    # zero this out.
+    assert fm.failure_category == "tool_use_observed"
     assert fm.provider_usage is not None
     assert fm.provider_usage.get("input_tokens") == 78

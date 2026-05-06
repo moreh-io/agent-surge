@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import agentsurge.frontends.events as E
 from agentsurge.frontends.base import FrontendConfig, FrontendRunArtifacts
 from agentsurge.frontends.events import (
     EVENT_ASSISTANT_TEXT_DELTA,
@@ -11,6 +12,7 @@ from agentsurge.frontends.events import (
     EVENT_PARSER_UNKNOWN,
     EVENT_SESSION_COMPLETED,
     EVENT_SESSION_STARTED,
+    EVENT_TOOL_USE_OBSERVED,
     EVENT_TURN_COMPLETED,
     EVENT_TURN_STARTED,
     EVENT_USAGE_COMPLETED,
@@ -32,13 +34,16 @@ def test_parse_real_simple_session_v1_14_29():
 
     kinds = [e.kind for e in events]
     # Expected sequence:
-    # SESSION_STARTED (from first event), TURN_STARTED, ASSISTANT_TEXT_DELTA, PARSER_UNKNOWN (tool_use),
-    # TURN_COMPLETED (reason=tool-calls; no usage on this one), TURN_STARTED, ASSISTANT_TEXT_DELTA,
+    # SESSION_STARTED (from first event), TURN_STARTED, ASSISTANT_TEXT_DELTA,
+    # TOOL_USE_OBSERVED (tool_use — contamination signal),
+    # TURN_COMPLETED (reason=tool-calls; no usage on this one), TURN_STARTED,
+    # ASSISTANT_TEXT_DELTA,
     # TURN_COMPLETED + USAGE_COMPLETED + SESSION_COMPLETED (reason=stop).
     assert kinds[0] == EVENT_SESSION_STARTED
     assert kinds.count(EVENT_TURN_STARTED) == 2
     assert kinds.count(EVENT_ASSISTANT_TEXT_DELTA) == 2
-    assert EVENT_PARSER_UNKNOWN in kinds  # tool_use
+    assert EVENT_TOOL_USE_OBSERVED in kinds  # tool_use → contamination signal
+    assert EVENT_PARSER_UNKNOWN not in kinds  # tool_use must NOT be silently dropped
     assert kinds.count(EVENT_TURN_COMPLETED) == 2
     assert kinds.count(EVENT_USAGE_COMPLETED) == 1  # only on final step_finish
     assert kinds.count(EVENT_SESSION_COMPLETED) == 1
@@ -129,3 +134,30 @@ def test_opencode_provider_build_command_no_model(tmp_path: Path):
         "json",
         f"--file={prompt_path}",
     ]
+
+
+def test_opencode_parser_routes_tool_use_to_observed_kind():
+    """OpenCode emits a `tool_use` JSONL event when it invokes a built-in
+    tool (bash/edit/grep/...). In benchmark mode the in-process
+    RequestShim strips `tools` from /v1/chat/completions so this should
+    never fire; if it does, the run is contaminated and downstream
+    metrics are not a clean throughput measurement. Pin the routing so a
+    refactor of OpenCodeEventParser._dispatch can't silently regress to
+    PARSER_UNKNOWN."""
+    parser = OpenCodeEventParser()
+    raw = (
+        '{"type":"tool_use","timestamp":1777420919152,'
+        '"sessionID":"ses_229752c43ffe3C5ZhTXEto9hCH",'
+        '"part":{"type":"tool","tool":"bash","callID":"call_function_0zce5eii9tsw_1",'
+        '"state":{"status":"completed","input":{"command":"echo \\"Hello, world!\\"","description":"Print one short sentence"},'
+        '"output":"Hello, world!\\n","metadata":{"output":"Hello, world!\\n","exit":0,'
+        '"description":"Print one short sentence","truncated":false},'
+        '"title":"Print one short sentence","time":{"start":1777420919095,"end":1777420919120}},'
+        '"id":"prt_dd68ae0990013w32BKZcCDsdSd",'
+        '"sessionID":"ses_229752c43ffe3C5ZhTXEto9hCH",'
+        '"messageID":"msg_dd68ad4c9001v2t8YU6R4aCWVM"}}\n'
+    )
+    events = parser.feed_stdout_line(raw, ts_monotonic=0.0)
+    assert len(events) == 2  # SESSION_STARTED (lazy) + TOOL_USE_OBSERVED
+    tool_use_event = events[1]
+    assert tool_use_event.kind == E.EVENT_TOOL_USE_OBSERVED
