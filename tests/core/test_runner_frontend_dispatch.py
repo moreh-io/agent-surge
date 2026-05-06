@@ -7,9 +7,13 @@ and _run_session_frontend based on BenchmarkConfig.frontend_name.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from agentsurge import BenchmarkConfig, ReplaySession
+from agentsurge.frontends.runner import FrontendSessionRenderer
 from agentsurge.runner import BenchmarkRunner
 from agentsurge.types import SessionResult
 from agentsurge.types.results import FrontendRuntimeSettings
@@ -161,3 +165,88 @@ def test_unwired_frontend_records_failure_in_session_result(monkeypatch):
     err = failed.metadata.get("error", "")
     assert "NotImplementedError" in err
     assert "codex" in err
+
+
+# ---------- Gap-3: extra_env merge order ----------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_CLAUDE_FIXTURE = _REPO_ROOT / "tests/core/fixtures/claude/real_simple_session_v2.1.122.jsonl"
+
+
+def _make_fake_subprocess_from_fixture(fixture_path: Path):
+    """Fake asyncio.create_subprocess_exec that streams a fixture file."""
+    from unittest.mock import AsyncMock
+
+    raw = fixture_path.read_bytes().splitlines(keepends=True)
+    lines = [ln for ln in raw if ln.strip()]
+
+    async def _factory(*_args, **_kwargs):
+        proc = MagicMock()
+        proc.pid = 9999
+        proc.returncode = None
+        stdout_iter = iter(lines)
+
+        async def _readline_stdout():
+            try:
+                line = next(stdout_iter)
+            except StopIteration:
+                return b""
+            await asyncio.sleep(0.001)
+            return line
+
+        proc.stdout = MagicMock()
+        proc.stdout.readline = AsyncMock(side_effect=_readline_stdout)
+        proc.stderr = MagicMock()
+        proc.stderr.readline = AsyncMock(return_value=b"")
+
+        async def _wait():
+            proc.returncode = 0
+            return 0
+
+        proc.wait = AsyncMock(side_effect=_wait)
+        return proc
+
+    return _factory
+
+
+@pytest.mark.asyncio
+async def test_renderer_extra_env_overrides_provider_env(tmp_path: Path, monkeypatch):
+    """User-supplied --frontend-extra-env values must override provider-
+    contributed env vars. Pinning this contract because the comment in
+    claude.py:119-120 relies on it ("User-set ANTHROPIC_AUTH_TOKEN ...
+    still wins because extra_env merges last in the renderer").
+
+    The merge in runner.py:128-132 is:
+        subprocess_env = {**os.environ, **provider_env, **dict(fconfig.extra_env or {})}
+    so extra_env must beat provider_env for overlapping keys."""
+    captured_envs: list[dict[str, str]] = []
+    fake_factory = _make_fake_subprocess_from_fixture(_CLAUDE_FIXTURE)
+
+    async def spy_factory(*args, **kwargs):
+        proc = await fake_factory(*args, **kwargs)
+        captured_envs.append(dict(kwargs.get("env") or {}))
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy_factory)
+
+    cfg = BenchmarkConfig(
+        vllm_url="http://127.0.0.1:18000",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="claude",
+            session_timeout_s=10.0,
+            keep_artifacts="always",
+            server_url="http://127.0.0.1:18000",
+            extra_env={"ANTHROPIC_BASE_URL": "http://OVERRIDE-WINS"},
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    await renderer.run(_make_session("s_extra_env"))
+
+    assert captured_envs, "subprocess was never spawned"
+    env = captured_envs[-1]
+    assert env.get("ANTHROPIC_BASE_URL") == "http://OVERRIDE-WINS", (
+        f"extra_env must override provider-contributed ANTHROPIC_BASE_URL; "
+        f"got {env.get('ANTHROPIC_BASE_URL')!r}"
+    )
