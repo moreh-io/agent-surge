@@ -189,6 +189,11 @@ class FrontendSessionRenderer:
                     limit=10 * 1024 * 1024,
                 )
             except (FileNotFoundError, PermissionError) as exc:
+                # Preserve the diagnostic line operators rely on when triaging
+                # missing-binary / permission-denied spawn failures via
+                # stderr.log; without it the artifact dir gives no clue.
+                stderr_f.write(f"spawn_error: {exc}\n".encode())
+                stderr_f.flush()
                 stderr_f.close()
                 stdout_f.close()
                 raise _SpawnFailed(exc) from exc
