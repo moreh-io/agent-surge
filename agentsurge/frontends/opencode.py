@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import cast
 
 from agentsurge.frontends import events as E
 from agentsurge.frontends.base import (
@@ -287,18 +288,30 @@ class OpenCodeEventParser:
         ]
 
     def _normalize_stop_usage(self, part: object) -> dict[str, int]:
-        # The ternary always yields a dict (possibly {}); `or {}` handles an
-        # explicit tokens=None from the API. No isinstance guard needed.
-        tokens: dict[str, object] = (part.get("tokens", {}) if isinstance(part, dict) else {}) or {}  # type: ignore[union-attr]
-        normalized: dict[str, int] = {
-            "input_tokens": int(tokens.get("input") or 0),  # type: ignore[call-overload]
-            "output_tokens": int(tokens.get("output") or 0),  # type: ignore[call-overload]
+        # `tokens` is JSON-derived so its values can be any type. Both guards
+        # are correctness gates (not redundant): `part` is `object` per
+        # signature, and a non-dict `tokens` (string, list, number) would
+        # crash at the subsequent `tokens.get(...)`. Drop either guard and we
+        # trade a silent passthrough for a runtime AttributeError.
+        #
+        # Values pass through unchanged (matching the pre-refactor code that
+        # used a bare `dict` and skirted mypy via duck-typing). The cast at
+        # the return is the only place this contract is named — opencode's
+        # protocol guarantees ints for token counts; downstream consumers
+        # tolerate the same risk the pre-refactor code did.
+        if not isinstance(part, dict):
+            return {"input_tokens": 0, "output_tokens": 0}
+        tokens = part.get("tokens") or {}
+        if not isinstance(tokens, dict):
+            return {"input_tokens": 0, "output_tokens": 0}
+        normalized: dict[str, object] = {
+            "input_tokens": tokens.get("input", 0),
+            "output_tokens": tokens.get("output", 0),
         }
-        reasoning = tokens.get("reasoning")
-        if reasoning is not None:
-            normalized["reasoning"] = int(reasoning)  # type: ignore[call-overload]
-        self._merge_cache_usage(normalized, tokens)  # type: ignore[arg-type]
-        return normalized
+        if "reasoning" in tokens:
+            normalized["reasoning"] = tokens["reasoning"]
+        self._merge_cache_usage(normalized, tokens)
+        return cast(dict[str, int], normalized)
 
     def _merge_cache_usage(self, normalized: dict[str, object], tokens: dict[str, object]) -> None:
         cache = tokens.get("cache", {}) or {}
