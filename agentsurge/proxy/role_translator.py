@@ -67,6 +67,36 @@ def _extract_text(content: object) -> list[str]:
     return out
 
 
+def _partition_input_by_role(inp: list[Any]) -> tuple[list[str], list[Any]]:
+    """Split an input list into (system-content-chunks, kept-messages).
+
+    Pulls every developer/system message into the chunks list and returns
+    the remaining messages untouched."""
+    system_chunks: list[str] = []
+    kept: list[Any] = []
+    for msg in inp:
+        if isinstance(msg, dict) and msg.get("role") in ("developer", "system"):
+            system_chunks.extend(_extract_text(msg.get("content")))
+        else:
+            kept.append(msg)
+    return system_chunks, kept
+
+
+def _merge_instructions(existing: str | None, chunks: list[str]) -> str:
+    """Concatenate `chunks` after `existing`, separating with a blank line."""
+    merged = existing or ""
+    for chunk in chunks:
+        if merged:
+            merged += "\n\n"
+        merged += chunk
+    return merged
+
+
+def _should_force_tools_off(obj: dict[str, Any]) -> bool:
+    """Return True if tool_choice or tools fields need to be forced off."""
+    return obj.get("tool_choice") != "none" or obj.get("tools") not in (None, [])
+
+
 def _rewrite_responses_body(raw: bytes) -> bytes:
     """Move every developer/system message in ``input[]`` into ``instructions``.
 
@@ -98,38 +128,16 @@ def _rewrite_responses_body(raw: bytes) -> bytes:
     inp = obj.get("input")
     if not isinstance(inp, list):
         return raw
-
-    system_chunks: list[str] = []
-    kept: list[Any] = []
-    for msg in inp:
-        if isinstance(msg, dict) and msg.get("role") in ("developer", "system"):
-            system_chunks.extend(_extract_text(msg.get("content")))
-        else:
-            kept.append(msg)
-
     existing = obj.get("instructions")
     if existing is not None and not isinstance(existing, str):
         return raw
 
-    merged = existing or ""
-    for chunk in system_chunks:
-        if merged:
-            merged += "\n\n"
-        merged += chunk
-
-    # Force tool calls off. The harness measures CLI throughput, not
-    # agentic tool execution. Without this codex sees its 11 declared
-    # tools, decides the prompt warrants reading a file, calls
-    # exec_command, and the second-turn request body that codex sends
-    # back contains ``function_call``/``function_call_output`` items
-    # that vLLM's Responses-adapter rejects with 215 pydantic errors
-    # ("Input should be a valid string"). Setting tool_choice="none"
-    # and tools=[] stops the loop before it starts.
-    needs_tool_off = obj.get("tool_choice") != "none" or obj.get("tools") not in (None, [])
-    if not system_chunks and not needs_tool_off:
+    chunks, kept = _partition_input_by_role(inp)
+    needs_tool_off = _should_force_tools_off(obj)
+    if not chunks and not needs_tool_off:
         return raw
 
-    obj["instructions"] = merged
+    obj["instructions"] = _merge_instructions(existing, chunks)
     obj["input"] = kept
     obj["tool_choice"] = "none"
     obj["tools"] = []
