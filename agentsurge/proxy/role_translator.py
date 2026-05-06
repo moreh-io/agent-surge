@@ -48,6 +48,26 @@ UPSTREAM_BASE: web.AppKey[str] = web.AppKey("upstream_base", str)
 TIMEOUT_S: web.AppKey[float] = web.AppKey("timeout_s", float)
 
 
+def _extract_text_from_part(part: object) -> str | None:
+    """Return the text string from a single content part, or None."""
+    if not isinstance(part, dict):
+        return None
+    text = part.get("text") or part.get("input_text") or ""
+    if isinstance(text, str) and text:
+        return text
+    return None
+
+
+def _collect_part_texts(parts: list[object]) -> list[str]:
+    """Collect non-None results of _extract_text_from_part across a list."""
+    out: list[str] = []
+    for part in parts:
+        t = _extract_text_from_part(part)
+        if t is not None:
+            out.append(t)
+    return out
+
+
 def _extract_text(content: object) -> list[str]:
     """Pull every text fragment out of a Responses-API ``content`` field.
 
@@ -58,13 +78,7 @@ def _extract_text(content: object) -> list[str]:
         return [content] if content else []
     if not isinstance(content, list):
         return []
-    out: list[str] = []
-    for part in content:
-        if isinstance(part, dict):
-            text = part.get("text") or part.get("input_text") or ""
-            if isinstance(text, str) and text:
-                out.append(text)
-    return out
+    return _collect_part_texts(content)
 
 
 def _partition_input_by_role(inp: list[Any]) -> tuple[list[str], list[Any]]:
