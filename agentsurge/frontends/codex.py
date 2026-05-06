@@ -7,6 +7,7 @@ codex stdout fixtures captured against an installed CLI version."""
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from agentsurge.frontends import events as E
 from agentsurge.frontends.base import (
@@ -126,6 +127,17 @@ class CodexEventParser:
 
     def __init__(self) -> None:
         self._buffer: str = ""
+        self._type_handlers: dict[
+            str, Callable[[dict[str, object], float], list[FrontendEvent]]
+        ] = {
+            "thread.started": self._handle_thread_started,
+            "turn.started": self._handle_turn_started,
+            "turn.completed": self._handle_turn_completed,
+            "turn.failed": self._handle_turn_failed,
+            "item.completed": self._handle_item_completed,
+            "usage": self._handle_usage,
+            "error": self._handle_error,
+        }
 
     def feed_stdout_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:
         self._buffer += line
@@ -152,69 +164,91 @@ class CodexEventParser:
 
     def _dispatch(self, obj: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
         type_str = obj.get("type")
-        if type_str == "thread.started":
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_STARTED, raw=obj)]
-        if type_str == "turn.started":
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_STARTED, raw=obj)]
-        if type_str == "turn.completed":
-            out: list[FrontendEvent] = [
-                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_COMPLETED, raw=obj)
-            ]
-            # Codex >=0.125.0 carries usage inline on turn.completed; older/synthetic
-            # shape emits a separate {"type":"usage",...} event handled below. Support both.
-            usage_raw = obj.get("usage")
-            if isinstance(usage_raw, dict):
-                usage = {k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))}
-                out.append(
-                    FrontendEvent(
-                        ts_monotonic=ts_monotonic,
-                        kind=E.EVENT_USAGE_COMPLETED,
-                        usage=usage,
-                        raw=obj,
-                    )
-                )
-            return out
-        if type_str == "turn.failed":
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_FAILED, raw=obj)]
-        if type_str == "item.completed":
-            item = obj.get("item")
-            if isinstance(item, dict) and item.get("type") == "agent_message":
-                text = item.get("text", "")
-                text_delta = text if isinstance(text, str) else ""
-                return [
-                    FrontendEvent(
-                        ts_monotonic=ts_monotonic,
-                        kind=E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
-                        text_delta=text_delta,
-                        raw=obj,
-                    )
-                ]
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ITEM_COMPLETED, raw=obj)]
-        if type_str == "usage":
-            usage_raw = obj.get("usage")
-            standalone_usage: dict[str, int] | None = None
-            if isinstance(usage_raw, dict):
-                standalone_usage = {
-                    k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))
-                }
-            return [
+        if not isinstance(type_str, str):
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
+        handler = self._type_handlers.get(type_str)
+        if handler is None:
+            # All real-fixture types (thread.started, turn.started, item.completed,
+            # turn.completed) currently dispatch to a named kind above; nothing from
+            # real_simple_session_v0.125.0.jsonl routes to PARSER_UNKNOWN.
+            # Re-audit if a CLI version bump introduces a new type.
+            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
+        return handler(obj, ts_monotonic)
+
+    def _handle_thread_started(
+        self, obj: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_STARTED, raw=obj)]
+
+    def _handle_turn_started(
+        self, obj: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_STARTED, raw=obj)]
+
+    def _handle_turn_completed(
+        self, obj: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        out: list[FrontendEvent] = [
+            FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_COMPLETED, raw=obj)
+        ]
+        # Codex >=0.125.0 carries usage inline on turn.completed; older/synthetic
+        # shape emits a separate {"type":"usage",...} event handled below. Support both.
+        usage_raw = obj.get("usage")
+        if isinstance(usage_raw, dict):
+            usage = {k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))}
+            out.append(
                 FrontendEvent(
                     ts_monotonic=ts_monotonic,
                     kind=E.EVENT_USAGE_COMPLETED,
-                    usage=standalone_usage,
+                    usage=usage,
+                    raw=obj,
+                )
+            )
+        return out
+
+    def _handle_turn_failed(
+        self, obj: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_FAILED, raw=obj)]
+
+    def _handle_item_completed(
+        self, obj: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        item = obj.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            text = item.get("text", "")
+            text_delta = text if isinstance(text, str) else ""
+            return [
+                FrontendEvent(
+                    ts_monotonic=ts_monotonic,
+                    kind=E.EVENT_ASSISTANT_MESSAGE_COMPLETED,
+                    text_delta=text_delta,
                     raw=obj,
                 )
             ]
-        if type_str == "error":
-            # Codex 0.125.0: obj["message"] is an escaped JSON string with shape
-            # {"type":"error","status":N,"error":{"type":"...","message":"..."}}.
-            # Pass through verbatim; downstream consumers parse if needed.
-            return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=obj)]
-        # All real-fixture types (thread.started, turn.started, item.completed,
-        # turn.completed) currently dispatch to a named kind above; nothing from
-        # real_simple_session_v0.125.0.jsonl routes to PARSER_UNKNOWN.
-        # Re-audit if a CLI version bump introduces a new type.
-        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=obj)]
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ITEM_COMPLETED, raw=obj)]
+
+    def _handle_usage(self, obj: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
+        usage_raw = obj.get("usage")
+        standalone_usage: dict[str, int] | None = None
+        if isinstance(usage_raw, dict):
+            standalone_usage = {
+                k: int(v) for k, v in usage_raw.items() if isinstance(v, (int, float))
+            }
+        return [
+            FrontendEvent(
+                ts_monotonic=ts_monotonic,
+                kind=E.EVENT_USAGE_COMPLETED,
+                usage=standalone_usage,
+                raw=obj,
+            )
+        ]
+
+    def _handle_error(self, obj: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
+        # Codex 0.125.0: obj["message"] is an escaped JSON string with shape
+        # {"type":"error","status":N,"error":{"type":"...","message":"..."}}.
+        # Pass through verbatim; downstream consumers parse if needed.
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=obj)]
 
     def feed_stderr_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:
         return []
