@@ -176,6 +176,22 @@ def test_codex_build_env_preserves_v1_when_present(tmp_path: Path) -> None:
     assert "/v1/v1" not in body
 
 
+def test_codex_build_env_declares_openai_api_key_env_key(tmp_path: Path) -> None:
+    """Codex reads its API key from the env var named in config.toml's
+    [model_providers.<name>].env_key. Without env_key set, codex ignores
+    OPENAI_API_KEY from the subprocess env that --frontend-extra-env supplies.
+    Pin the exact env_key value so a refactor can't silently drop the bridge
+    between extra_env-supplied OPENAI_API_KEY and the codex subprocess."""
+    artifacts = _artifacts(tmp_path / "s")
+    CodexProvider().build_env(
+        artifacts,
+        _config(server_url="http://127.0.0.1:18000"),
+    )
+    cfg_path = artifacts.session_dir / "codex_home" / "config.toml"
+    body = cfg_path.read_text()
+    assert 'env_key = "OPENAI_API_KEY"' in body, body
+
+
 def test_codex_capability_supports_custom_base_url() -> None:
     assert CodexProvider().capabilities.supports_custom_base_url is True
 
