@@ -7,6 +7,7 @@ All external dependencies (runner, analyzer, capacity, metrics) are mocked.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 
 import pytest
@@ -72,8 +73,6 @@ class TestCLIStructure:
             assert len(params) >= 1, f"{fn.__name__} should accept at least one argument"
 
     def test_sweep_subcommand_in_help(self):
-        import subprocess
-
         result = subprocess.run(
             [sys.executable, "-m", "agentsurge", "--help"],
             capture_output=True,
@@ -83,3 +82,17 @@ class TestCLIStructure:
         assert result.returncode == 0
         for cmd in ("sweep", "generate"):
             assert cmd in result.stdout, f"'{cmd}' missing from --help"
+
+
+def test_proxy_translator_subcommand_is_removed():
+    """The proxy-translator subprocess is replaced by the in-process
+    RequestShim spawned from FrontendSessionRenderer (Task 4, commit
+    25b80d6). Re-introducing the standalone CLI invites the dual-port
+    confusion that motivated the in-process design."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "agentsurge", "proxy-translator", "--target", "http://x:1"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0, "proxy-translator should no longer be a valid subcommand"
+    assert "proxy-translator" not in proc.stdout, "subcommand still listed in help"

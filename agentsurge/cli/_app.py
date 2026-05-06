@@ -11,7 +11,6 @@ import signal
 import sys
 
 from agentsurge.cli.generate import cmd_generate
-from agentsurge.cli.proxy_cmd import cmd_proxy_translator
 from agentsurge.cli.run import cmd_run
 from agentsurge.cli.sweep import _probe_levels_type, cmd_sweep
 from agentsurge.preset import PRESET_NAMES
@@ -914,33 +913,6 @@ def main() -> None:
     )
     p_gen.add_argument("--data-dir", default="data", help="Local data directory")
     p_gen.set_defaults(func=cmd_generate)
-
-    p_proxy = sub.add_parser(
-        "proxy-translator",
-        help="Run a Codex Responses-API role-translating reverse proxy",
-        description=(
-            "Run a Codex Responses-API role-translating reverse proxy. Sits "
-            "between Codex and an OpenAI-compatible upstream, rewriting "
-            "developer→system role inside POST /v1/responses bodies."
-        ),
-    )
-    p_proxy.add_argument(
-        "--listen",
-        default="127.0.0.1:18100",
-        help="host:port to listen on (default: 127.0.0.1:18100)",
-    )
-    p_proxy.add_argument(
-        "--target",
-        required=True,
-        help="upstream OpenAI-compatible base URL (e.g. http://127.0.0.1:18000)",
-    )
-    p_proxy.add_argument(
-        "--timeout",
-        type=float,
-        default=600.0,
-        help="per-request upstream timeout in seconds (default: 600)",
-    )
-    p_proxy.set_defaults(func=cmd_proxy_translator)
 
     args = parser.parse_args()
     if not args.command:
