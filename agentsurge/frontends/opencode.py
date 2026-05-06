@@ -52,6 +52,7 @@ class OpenCodeProvider:
         requires_git_repo=False,
         required_env=(),
         known_unsupported_modes=(),
+        requires_request_rewrite=True,
     )
 
     def render(self, session: ReplaySession, artifacts: FrontendRunArtifacts) -> None:

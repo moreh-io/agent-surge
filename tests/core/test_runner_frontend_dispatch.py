@@ -13,10 +13,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from agentsurge import BenchmarkConfig, ReplaySession
+from agentsurge.frontends.codex import CodexProvider
 from agentsurge.frontends.runner import FrontendSessionRenderer
 from agentsurge.runner import BenchmarkRunner
 from agentsurge.types import SessionResult
 from agentsurge.types.results import FrontendRuntimeSettings
+from tests.core.test_frontend_provider_wiring import _make_fake_subprocess
 
 # All declared frontend names are wired in _resolve_provider as of Task N.2.
 # Tests below that need a non-direct frontend pick "codex" purely so
@@ -250,3 +252,52 @@ async def test_renderer_extra_env_overrides_provider_env(tmp_path: Path, monkeyp
         f"extra_env must override provider-contributed ANTHROPIC_BASE_URL; "
         f"got {env.get('ANTHROPIC_BASE_URL')!r}"
     )
+
+
+_CODEX_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "codex" / "real_simple_session_v0.125.0.jsonl"
+)
+
+
+@pytest.mark.asyncio
+async def test_renderer_spawns_request_shim_for_codex(tmp_path: Path, monkeypatch):
+    """Codex provider declares requires_request_rewrite=True. The renderer
+    must wrap the CLI in RequestShim and pass the shim URL into the
+    provider's build_command/build_env so requests funnel through the
+    rewrite logic."""
+    captured_server_urls: list[str | None] = []
+
+    real_build_command = CodexProvider.build_command
+
+    def spy_build_command(self, artifacts, config):
+        captured_server_urls.append(config.server_url)
+        return real_build_command(self, artifacts, config)
+
+    monkeypatch.setattr(CodexProvider, "build_command", spy_build_command)
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        _make_fake_subprocess(_CODEX_FIXTURE),
+    )
+
+    cfg = BenchmarkConfig(
+        vllm_url="http://x",
+        model="t",
+        no_metrics=True,
+        frontend=FrontendRuntimeSettings(
+            name="codex",
+            session_timeout_s=10.0,
+            keep_artifacts="always",
+            server_url="http://localhost:18002/v1",
+        ),
+    )
+    renderer = FrontendSessionRenderer(cfg, tmp_path)
+    await renderer.run(_make_session("s_codex_shim"))
+
+    assert captured_server_urls, "build_command never called"
+    seen = captured_server_urls[-1]
+    assert seen is not None and seen.startswith("http://127.0.0.1:"), (
+        f"codex must see the shim URL, got {seen!r}"
+    )
+    assert seen != "http://localhost:18002/v1", "codex must not see the raw upstream URL"

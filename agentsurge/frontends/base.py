@@ -42,6 +42,7 @@ class FrontendEvent:
 
 class FrontendProvider(Protocol):
     name: str
+    capabilities: FrontendProviderCapabilities
 
     def render(self, session: ReplaySession, artifacts: FrontendRunArtifacts) -> None: ...
 
@@ -95,3 +96,4 @@ class FrontendProviderCapabilities:
     requires_git_repo: bool
     required_env: tuple[str, ...]
     known_unsupported_modes: tuple[str, ...]
+    requires_request_rewrite: bool = False
