@@ -198,17 +198,26 @@ def _rewrite_chat_completions_body(raw: bytes) -> bytes:
     return json.dumps(obj).encode("utf-8")
 
 
+def _rewrite_body_for(method: str, path: str, body: bytes) -> bytes:
+    """Apply any path-specific body rewrite; return body unchanged if none applies."""
+    if method == "POST" and path == "/v1/responses":
+        return _rewrite_responses_body(body)
+    if method == "POST" and path == "/v1/chat/completions":
+        return _rewrite_chat_completions_body(body)
+    return body
+
+
+def _strip_hop_by_hop(headers: Any) -> dict[str, str]:
+    """Return a copy of *headers* with hop-by-hop entries removed."""
+    return {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP}
+
+
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     upstream_base = request.app[UPSTREAM_BASE]
     timeout_s = request.app[TIMEOUT_S]
 
-    body = await request.read()
-    if request.method == "POST" and request.path == "/v1/responses":
-        body = _rewrite_responses_body(body)
-    elif request.method == "POST" and request.path == "/v1/chat/completions":
-        body = _rewrite_chat_completions_body(body)
-
-    forwarded_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    body = _rewrite_body_for(request.method, request.path, await request.read())
+    forwarded_headers = _strip_hop_by_hop(request.headers)
 
     target = upstream_base.rstrip("/") + request.rel_url.path_qs
     timeout = aiohttp.ClientTimeout(total=timeout_s)
@@ -220,10 +229,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             headers=forwarded_headers,
             data=body if body else None,
         ) as upstream:
-            resp_headers = {
-                k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
-            }
-            resp = web.StreamResponse(status=upstream.status, headers=resp_headers)
+            resp = web.StreamResponse(
+                status=upstream.status, headers=_strip_hop_by_hop(upstream.headers)
+            )
             await resp.prepare(request)
             async for chunk in upstream.content.iter_chunked(8192):
                 await resp.write(chunk)
