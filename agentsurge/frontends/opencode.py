@@ -12,6 +12,7 @@ for the captured ground truth."""
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from agentsurge.frontends import events as E
 from agentsurge.frontends.base import (
@@ -151,6 +152,15 @@ class OpenCodeEventParser:
         self._buffer: str = ""
         self._session_started_emitted: bool = False
         self._session_id: str | None = None
+        self._type_handlers: dict[
+            str, Callable[[dict[str, object], float], list[FrontendEvent]]
+        ] = {
+            "step_start": self._handle_step_start,
+            "text": self._handle_text,
+            "tool_use": self._handle_tool_use,
+            "step_finish": self._handle_step_finish,
+            "error": self._handle_error,
+        }
 
     def feed_stdout_line(self, line: str, ts_monotonic: float) -> list[FrontendEvent]:
         events: list[FrontendEvent] = []
@@ -191,10 +201,11 @@ class OpenCodeEventParser:
         self._buffer = ""
         return events
 
-    def _dispatch(self, parsed: dict, ts_monotonic: float) -> list[FrontendEvent]:
+    def _dispatch(self, parsed: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
         events: list[FrontendEvent] = []
         if not self._session_started_emitted:
-            self._session_id = parsed.get("sessionID")
+            session_id = parsed.get("sessionID")
+            self._session_id = session_id if isinstance(session_id, str) else None
             events.append(
                 FrontendEvent(
                     ts_monotonic=ts_monotonic,
@@ -203,65 +214,14 @@ class OpenCodeEventParser:
                 )
             )
             self._session_started_emitted = True
-
-        kind = parsed.get("type")
-        if kind == "step_start":
+        type_str = parsed.get("type")
+        if not isinstance(type_str, str):
             events.append(
-                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_STARTED, raw=parsed)
+                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed)
             )
-        elif kind == "text":
-            part = parsed.get("part", {}) or {}
-            text = part.get("text", "") if isinstance(part, dict) else ""
-            events.append(
-                FrontendEvent(
-                    ts_monotonic=ts_monotonic,
-                    kind=E.EVENT_ASSISTANT_TEXT_DELTA,
-                    text_delta=text,
-                    raw=parsed,
-                )
-            )
-        elif kind == "tool_use":
-            events.append(
-                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TOOL_USE_OBSERVED, raw=parsed)
-            )
-        elif kind == "step_finish":
-            events.append(
-                FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_COMPLETED, raw=parsed)
-            )
-            part = parsed.get("part", {}) or {}
-            reason = part.get("reason") if isinstance(part, dict) else None
-            if reason == "stop":
-                tokens = part.get("tokens", {}) if isinstance(part, dict) else {}
-                if not isinstance(tokens, dict):
-                    tokens = {}
-                cache = tokens.get("cache", {}) or {}
-                if not isinstance(cache, dict):
-                    cache = {}
-                normalized_usage: dict = {
-                    "input_tokens": tokens.get("input", 0),
-                    "output_tokens": tokens.get("output", 0),
-                }
-                if "reasoning" in tokens:
-                    normalized_usage["reasoning"] = tokens["reasoning"]
-                if "read" in cache or "write" in cache:
-                    normalized_usage["cache_read"] = cache.get("read", 0)
-                    normalized_usage["cache_write"] = cache.get("write", 0)
-                events.append(
-                    FrontendEvent(
-                        ts_monotonic=ts_monotonic,
-                        kind=E.EVENT_USAGE_COMPLETED,
-                        usage=normalized_usage,
-                        raw=parsed,
-                    )
-                )
-                events.append(
-                    FrontendEvent(
-                        ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_COMPLETED, raw=parsed
-                    )
-                )
-        elif kind == "error":
-            events.append(FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=parsed))
-        else:
+            return events
+        handler = self._type_handlers.get(type_str)
+        if handler is None:
             # All real-fixture types (step_start, text, tool_use, step_finish, error)
             # dispatch to a named kind above; no additional types route here from
             # real_simple_session_v1.14.29.jsonl. Re-audit if a CLI version bump
@@ -269,4 +229,84 @@ class OpenCodeEventParser:
             events.append(
                 FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_PARSER_UNKNOWN, raw=parsed)
             )
+            return events
+        events.extend(handler(parsed, ts_monotonic))
         return events
+
+    def _handle_step_start(
+        self, parsed: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_STARTED, raw=parsed)]
+
+    def _handle_text(self, parsed: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
+        part = parsed.get("part", {}) or {}
+        text = part.get("text", "") if isinstance(part, dict) else ""
+        return [
+            FrontendEvent(
+                ts_monotonic=ts_monotonic,
+                kind=E.EVENT_ASSISTANT_TEXT_DELTA,
+                text_delta=text,
+                raw=parsed,
+            )
+        ]
+
+    def _handle_tool_use(
+        self, parsed: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        return [
+            FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TOOL_USE_OBSERVED, raw=parsed)
+        ]
+
+    def _handle_step_finish(
+        self, parsed: dict[str, object], ts_monotonic: float
+    ) -> list[FrontendEvent]:
+        events: list[FrontendEvent] = [
+            FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_TURN_COMPLETED, raw=parsed)
+        ]
+        part = parsed.get("part", {}) or {}
+        reason = part.get("reason") if isinstance(part, dict) else None
+        if reason == "stop":
+            events.extend(self._build_stop_events(parsed, part, ts_monotonic))
+        return events
+
+    def _build_stop_events(
+        self,
+        parsed: dict[str, object],
+        part: object,
+        ts_monotonic: float,
+    ) -> list[FrontendEvent]:
+        normalized_usage = self._normalize_stop_usage(part)
+        return [
+            FrontendEvent(
+                ts_monotonic=ts_monotonic,
+                kind=E.EVENT_USAGE_COMPLETED,
+                usage=normalized_usage,
+                raw=parsed,
+            ),
+            FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_SESSION_COMPLETED, raw=parsed),
+        ]
+
+    def _normalize_stop_usage(self, part: object) -> dict[str, int]:
+        # The ternary always yields a dict (possibly {}); `or {}` handles an
+        # explicit tokens=None from the API. No isinstance guard needed.
+        tokens: dict[str, object] = (part.get("tokens", {}) if isinstance(part, dict) else {}) or {}  # type: ignore[union-attr]
+        normalized: dict[str, int] = {
+            "input_tokens": int(tokens.get("input") or 0),  # type: ignore[call-overload]
+            "output_tokens": int(tokens.get("output") or 0),  # type: ignore[call-overload]
+        }
+        reasoning = tokens.get("reasoning")
+        if reasoning is not None:
+            normalized["reasoning"] = int(reasoning)  # type: ignore[call-overload]
+        self._merge_cache_usage(normalized, tokens)  # type: ignore[arg-type]
+        return normalized
+
+    def _merge_cache_usage(self, normalized: dict[str, object], tokens: dict[str, object]) -> None:
+        cache = tokens.get("cache", {}) or {}
+        if not isinstance(cache, dict):
+            return
+        if "read" in cache or "write" in cache:
+            normalized["cache_read"] = cache.get("read", 0)
+            normalized["cache_write"] = cache.get("write", 0)
+
+    def _handle_error(self, parsed: dict[str, object], ts_monotonic: float) -> list[FrontendEvent]:
+        return [FrontendEvent(ts_monotonic=ts_monotonic, kind=E.EVENT_ERROR, raw=parsed)]
