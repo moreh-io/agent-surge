@@ -16,10 +16,8 @@ env failure surfaces once with a clear message instead of three times.
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -51,59 +49,6 @@ def vllm_env() -> dict[str, str]:
         "api_key": os.environ["AGENTSURGE_E2E_VLLM_API_KEY"],
         "model": os.environ["AGENTSURGE_E2E_VLLM_MODEL"],
     }
-
-
-def _find_free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _wait_for_port(port: int, timeout_s: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        with socket.socket() as s:
-            s.settimeout(0.5)
-            try:
-                s.connect(("127.0.0.1", port))
-                return
-            except OSError:
-                time.sleep(0.1)
-    raise RuntimeError(f"port {port} did not become reachable within {timeout_s}s")
-
-
-@pytest.fixture
-def translator_shim(vllm_env):
-    """Spawn `agentsurge proxy-translator` pointed at the vLLM endpoint.
-    Yields the translator's listen URL. Used by Codex tests so requests
-    flow Codex → shim (developer→system rewrite) → vLLM."""
-    port = _find_free_port()
-    target = vllm_env["url"]
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "agentsurge",
-            "proxy-translator",
-            "--listen",
-            f"127.0.0.1:{port}",
-            "--target",
-            target,
-            "--timeout",
-            "300",
-        ],
-        cwd=str(REPO_ROOT),
-    )
-    try:
-        _wait_for_port(port)
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
 
 
 def run_agentsurge(

@@ -21,9 +21,7 @@ pytestmark = pytest.mark.real_cli
 
 
 @_REAL_CLI_SKIP
-def test_opencode_4_concurrent_smoke(
-    tmp_path: Path, vllm_env: dict[str, str], translator_shim: str
-) -> None:
+def test_opencode_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> None:
     """4 concurrent OpenCode sessions must complete without WAL corruption.
 
     XDG_DATA_HOME isolation (Task 4) gives each session its own SQLite DB
@@ -31,19 +29,20 @@ def test_opencode_4_concurrent_smoke(
     ~/.local/share/opencode/opencode.db-{shm,wal} corrupts when two or
     more sessions run concurrently.
 
-    OpenCode is routed through translator_shim too (not just Codex) so the
-    proxy can strip ``tools`` from /v1/chat/completions and pin
-    ``tool_choice="none"``. Without that, OpenCode advertises its 12
-    built-in tools and qwen3.6 loops on tool execution until session_
-    timeout fires (2026-04-29 mi250-069 4-concurrent: 100% timeouts at
-    600 s before the chat-completions tool-strip landed).
+    ``FrontendSessionRenderer`` now wraps OpenCode in an in-process
+    ``RequestShim`` (``agentsurge.proxy.request_shim``) that strips
+    ``tools`` from /v1/chat/completions and pins ``tool_choice="none"``
+    without a separate proxy subprocess. Without that rewrite, OpenCode
+    advertises its 12 built-in tools and qwen3.6 loops on tool execution
+    until session_timeout fires (2026-04-29 mi250-069 4-concurrent: 100%
+    timeouts at 600 s before the chat-completions tool-strip landed).
     """
     workspace = tmp_path / "ws"
     output = tmp_path / "results"
     proc = run_agentsurge(
         frontend="opencode",
         model=f"vllm/{vllm_env['model']}",
-        server_url=translator_shim,
+        server_url=vllm_env["url"],
         api_key_env_pair=f"OPENAI_API_KEY={vllm_env['api_key']}",
         workspace_dir=workspace,
         output_dir=output,
@@ -123,24 +122,24 @@ def test_claude_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> 
 
 
 @_REAL_CLI_SKIP
-def test_codex_4_concurrent_smoke_via_translator(
-    tmp_path: Path, vllm_env: dict[str, str], translator_shim: str
-) -> None:
-    """4 concurrent Codex sessions must complete via the role-translator.
+def test_codex_4_concurrent_smoke(tmp_path: Path, vllm_env: dict[str, str]) -> None:
+    """4 concurrent Codex sessions must complete via the in-process RequestShim.
 
     Codex 0.125+ sends Responses-API requests with `role: "developer"`,
-    which Qwen 3.6's chat template rejects with HTTP 400. The
-    translator_shim fixture spawns `agentsurge proxy-translator` between
-    Codex and vLLM; it rewrites developer→system inside POST /v1/responses
-    bodies. The Codex --frontend-server-url points at the shim, not the
-    vLLM endpoint directly.
+    which Qwen 3.6's chat template rejects with HTTP 400.
+    ``FrontendSessionRenderer`` now wraps codex in an in-process
+    ``RequestShim`` (``agentsurge.proxy.request_shim``) that does the
+    developer→system rewrite without a separate proxy subprocess. The shim
+    port is allocated dynamically per session; ``--frontend-server-url``
+    points at the upstream vLLM endpoint and the renderer injects the shim
+    URL into each session's CODEX_HOME/config.toml automatically.
     """
     workspace = tmp_path / "ws"
     output = tmp_path / "results"
     proc = run_agentsurge(
         frontend="codex",
         model=vllm_env["model"],
-        server_url=translator_shim,
+        server_url=vllm_env["url"],
         api_key_env_pair=f"OPENAI_API_KEY={vllm_env['api_key']}",
         workspace_dir=workspace,
         output_dir=output,
@@ -162,14 +161,8 @@ def test_codex_4_concurrent_smoke_via_translator(
     sessions_dir = workspace / "sessions"
     session_subdirs = sorted(sessions_dir.iterdir())
     assert len(session_subdirs) == 4
-    # Each session must have an isolated CODEX_HOME with the rewritten
-    # config.toml pointing at the shim, not vLLM directly.
+    # Each session must have an isolated CODEX_HOME directory.
     for sd in session_subdirs:
         codex_home = sd / "codex_home"
         assert codex_home.is_dir(), f"missing codex_home in {sd}"
-        config_toml = (codex_home / "config.toml").read_text()
-        assert translator_shim.rstrip("/") in config_toml, (
-            f"codex_home/config.toml in {sd} did not point at the shim "
-            f"({translator_shim}); contents:\n{config_toml}"
-        )
         assert (sd / "stdout.jsonl").stat().st_size > 0
