@@ -1,0 +1,14 @@
+# Minimal agentsurge configuration
+# Only overrides you need - everything else falls back to default.yaml
+#
+# Usage:
+#   agentsurge run --config configs/examples/minimal.yaml --n-sessions 10
+
+vllm:
+  url: "http://localhost:8000"
+  model: "meta-llama/Llama-3.1-8B-Instruct"
+  timeout: 300
+
+runner:
+  max_concurrency: 10
+  max_tokens: 256

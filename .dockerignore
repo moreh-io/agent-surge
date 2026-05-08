@@ -1,0 +1,23 @@
+# Exclude heavy/unnecessary files from Docker context
+results/
+.git/
+.codex-worktrees/
+build/
+dist/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hf_cache/
+.omc/
+.claude/
+LMCache/
+node_modules/
+research/
+data/
+tmp_data/
+mixed/
+figures/
+scripts/k8s/

@@ -1,0 +1,35 @@
+# LMCache 3-tier configuration (GPU + CPU + Disk)
+# Example LMCache configuration. Pass this file path to vLLM --kv-transfer-config.
+#
+# Usage:
+#   LMCACHE_CONFIG_FILE=configs/examples/lmcache.yaml \
+#   vllm serve <model> \
+#     --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}'
+
+# KV chunk size (in tokens). Recommended: 2048 for good PCIe bandwidth utilization.
+# Smaller = finer-grained caching; larger = better I/O efficiency.
+chunk_size: 2048
+
+# --- Tier 1: GPU (vLLM built-in KV cache) ---
+# GPU KV is managed by vLLM; no LMCache configuration needed.
+# GPU KV capacity is determined by vLLM --gpu-memory-utilization 0.9.
+
+# --- Tier 2: CPU offload ---
+local_device: "cpu"
+local_cpu: True
+# Maximum CPU cache size (GB). Adjust based on available host memory.
+max_local_cpu_size: 50
+
+# --- Tier 3: Disk offload ---
+# Note: /tmp is ephemeral storage. Use a persistent path for production.
+local_disk: "/tmp/lmcache_disk/"
+max_local_disk_size: 50
+
+# Whether to save incomplete (partial) chunks.
+# True: saves the last incomplete chunk (increases cache hit rate, increases memory usage)
+save_unfull_chunk: False
+
+# (Optional) Remote backend - Mooncake RDMA is not supported on all platforms.
+# TCP mode is available, but disable if local CPU+Disk is sufficient.
+# remote_url: "lm://remote-host:65432"
+# remote_serde: "cachegen"

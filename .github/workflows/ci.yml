@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, "feature/*"]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaging-smoke:
+    name: "Packaging Smoke"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Minimal install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Import and mock quickstart smoke
+        run: |
+          python - <<'PY'
+          import agentsurge
+          assert agentsurge.__version__
+          PY
+          agentsurge run \
+            --backend mock \
+            --tool-mode off \
+            --model mock-model \
+            --vllm-url http://mock.local \
+            --n-sessions 1 \
+            --n-turns 1 \
+            --client-concurrency 1 \
+            --max-tokens 4 \
+            --no-metrics \
+            --ignore-replay-output-length \
+            --output-dir smoke-results
+
+      - name: Build and check package
+        run: |
+          pip install build twine
+          python -m build
+          python -m twine check dist/*
+
+  # ── Main test suite (excludes tests/capacity/) ──────────────
+  main-tests:
+    name: "Main Tests (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install pytest pytest-asyncio
+
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check agentsurge/
+
+      - name: Type check
+        run: |
+          pip install mypy types-PyYAML
+          mypy agentsurge/ --ignore-missing-imports
+
+      - name: Run main test suite
+        run: |
+          pytest tests/ --ignore=tests/capacity/ -v --tb=short
+
+  # NOTE: Capacity tests (tests/capacity/) are run in their own
+  # dedicated workflow file: .github/workflows/capacity.yml
+  # They are intentionally excluded here so experimental failures do not
+  # block the main CI green-light.

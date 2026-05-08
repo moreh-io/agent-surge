@@ -1,0 +1,82 @@
+{
+  "Distributed Consensus": [
+    "Raft achieves consensus by electing a leader via randomized election timeouts.",
+    "The leader handles all client requests and replicates log entries to followers.",
+    "A log entry is committed once a majority of nodes acknowledge it.",
+    "On leader failure, a new election starts after the election timeout expires.",
+    "Split-brain is avoided because only one candidate can win a given term.",
+    "Log compaction via snapshots bounds disk usage independently of log length.",
+    "Joint consensus allows safe cluster membership changes without downtime.",
+    "Paxos variants (Multi-Paxos, Fast Paxos) trade latency for throughput."
+  ],
+  "Key-Value Store Design": [
+    "LSM-trees batch random writes into sequential I/O using an in-memory memtable.",
+    "When the memtable reaches its size limit it is flushed to an immutable SSTable.",
+    "SSTables are periodically merged via compaction to bound read amplification.",
+    "Bloom filters per SSTable reduce unnecessary disk seeks for negative lookups.",
+    "Block cache holds recently accessed data blocks to serve hot reads in memory.",
+    "Write-ahead logging ensures durability: the WAL is fsynced before ack.",
+    "Column families allow independent compaction schedules for different data.",
+    "Leveled compaction bounds space amplification at the cost of write amplification."
+  ],
+  "Attention Mechanisms": [
+    "Scaled dot-product attention computes Q*K^T / sqrt(d_k) then softmax * V.",
+    "Multi-head attention runs h parallel attention heads and concatenates outputs.",
+    "Grouped-query attention (GQA) shares K/V heads across query heads to reduce KV cache size.",
+    "Multi-latent attention (MLA) compresses K/V into a low-rank latent vector.",
+    "Flash Attention fuses the softmax and matmul into a single CUDA kernel.",
+    "Sliding window attention limits each token to a fixed local context window.",
+    "Rotary positional embeddings (RoPE) encode position via rotation in complex space.",
+    "KV cache stores computed key/value tensors to avoid recomputing during decoding."
+  ],
+  "Caching Strategies": [
+    "LRU eviction removes the least recently accessed item when capacity is reached.",
+    "CLOCK approximates LRU with a circular buffer and reference bits.",
+    "TinyLFU uses a frequency sketch to admit only high-frequency items.",
+    "Write-through caches update both cache and backing store on every write.",
+    "Write-back caches defer backing-store writes, improving write throughput.",
+    "Cache-aside (lazy loading) loads data into cache on first miss.",
+    "Two-tier caching places hot data in DRAM and warm data on NVMe SSD.",
+    "Prefix caching deduplicates KV tensors for shared prompt prefixes across requests."
+  ],
+  "GPU Memory Management": [
+    "CUDA unified memory enables automatic page migration between CPU and GPU.",
+    "HBM2e provides ~3.2 TB/s bandwidth vs ~50 GB/s for DDR5.",
+    "Tensor parallelism shards weight matrices across GPUs to reduce per-device memory.",
+    "Pipeline parallelism assigns consecutive layers to different devices.",
+    "Activation checkpointing trades compute for memory by recomputing activations.",
+    "PagedAttention manages KV cache in fixed-size pages like OS virtual memory.",
+    "Memory pooling pre-allocates large CUDA buffers to avoid repeated malloc/free.",
+    "Mixed precision (BF16/FP8) halves or quarters the memory footprint of weights."
+  ],
+  "Networking and RPC": [
+    "gRPC uses HTTP/2 for multiplexed, bidirectional streaming RPCs.",
+    "Protocol Buffers serialize structured data compactly with schema evolution.",
+    "RDMA bypasses the CPU for memory-to-memory transfers over InfiniBand or RoCE.",
+    "TCP slow start ramps up the congestion window exponentially until loss.",
+    "QUIC multiplexes streams over UDP, eliminating head-of-line blocking.",
+    "Service mesh (Envoy/Istio) offloads TLS, retries, and circuit breaking from apps.",
+    "NCCL implements collective operations (AllReduce, AllGather) optimized for GPUs.",
+    "Zero-copy networking passes buffer ownership to the NIC without CPU memcpy."
+  ],
+  "Scheduling and Queue Management": [
+    "Shortest-job-first minimizes average wait time but requires knowing job length.",
+    "Work-stealing lets idle threads take tasks from busy thread queues.",
+    "Weighted fair queuing assigns bandwidth proportional to each flow's weight.",
+    "Token bucket rate limiting smooths bursty traffic to a sustained average rate.",
+    "Chunked prefill splits long prompt prefills across multiple scheduler steps.",
+    "Continuous batching groups decode steps from different requests into one batch.",
+    "Preemption evicts low-priority requests to free KV memory for high-priority ones.",
+    "Speculation decoding runs a small draft model to propose tokens for the large model."
+  ],
+  "Database Indexing": [
+    "B+ tree indexes store sorted keys in leaf nodes linked for range scans.",
+    "Hash indexes provide O(1) point lookups but do not support range queries.",
+    "Bitmap indexes compress membership information for low-cardinality columns.",
+    "Covering indexes include all projected columns to avoid heap fetches.",
+    "Partial indexes index only rows satisfying a predicate, reducing size.",
+    "GIN (Generalized Inverted Index) supports full-text and JSONB containment queries.",
+    "BRIN stores min/max per block; effective when data has natural clustering.",
+    "Adaptive radix trees (ART) combine memory efficiency with cache-friendly lookups."
+  ]
+}

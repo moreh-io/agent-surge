@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Test / type-check caches
+.coverage
+coverage.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Env
+.env
+.env.*
+
+# Tool integrations
+.claude/
+.codex-worktrees/
+
+# Run artifacts
+results/
+agentsurge/results/
+agentsurge/data/trace_pool.json
+
+# Logs / images (allow asset images)
+*.log
+*.png
+!assets/**/*.png
+
+# scripts/ — ship only the curated entries
+scripts/*
+!scripts/README.md
+!scripts/generate_example_figures.py
+!scripts/generate_metrics_showcase.py
+!scripts/regenerate_all_figures.py
+
+# Internal-only (kept locally, not shipped)
+uv.lock
+contrib/
+/figures/
+docs/tmux_agents.example.json

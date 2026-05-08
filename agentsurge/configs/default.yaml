@@ -1,0 +1,171 @@
+# agentsurge default configuration
+vllm:
+  url: "http://localhost:8000"
+  model: "default"
+  timeout: 600
+
+workload:
+  n_turns: 3                  # 3 turns × 2700 tok ≈ 8K context per session
+  synthetic_tokens_per_turn: 2700  # ~2.7K tok/turn (SWE-Effi arXiv:2509.09853: agent avg incremental input)
+  ttft_threshold: 3000        # ms; TTFT spike threshold (KV saturation: TTFT 1-4s normal, 41s at transition)
+
+runner:
+  max_concurrency: 100        # Default concurrent session cap
+  max_tokens: 256             # Stress mode: short output for prefill-dominated measurement
+  temperature: 0.3            # Letta llm_config default (arXiv:2310.08560)
+  arrival_pattern: "poisson"  # poisson | burst | constant | gamma
+  arrival_rate: "auto"  # "auto" = concurrency * 0.3, or explicit float
+  api_type: "chat"            # "chat" for /v1/chat/completions, "responses" for /v1/responses
+
+presets:
+  # ─── stress-* : Prefill/KV measurement (short output, find server limits) ───
+  stress-default:
+    # Maximum throughput, no delays - find KV saturation point
+    think_time: null
+    tool_delay: false
+    max_retries: 0
+    max_tokens: 256
+    arrival_pattern: "burst"
+    interruption_rate: 0
+    single_turn_ratio: 0
+  stress-prefix-cache:
+    # Prefix cache efficiency test (arXiv:2601.06007: 79% cost saving)
+    think_time: null
+    tool_delay: false
+    max_retries: 0
+    max_tokens: 256
+    arrival_pattern: "burst"        # All at once to stress prefix cache
+    interruption_rate: 0
+    single_turn_ratio: 0
+  stress-lmcache:
+    # LMCache tier stress test: high arrival rate + single-turn mix
+    think_time: null
+    tool_delay: false
+    max_retries: 0
+    max_tokens: 256
+    arrival_pattern: "poisson"
+    interruption_rate: 0
+    single_turn_ratio: 0.3
+    arrival_rate: 150
+
+  # ─── simulate-* : Realistic traffic simulation (paper-based parameters) ───
+  # Assistant-reply injection defaults to --tool-mode: replay → recorded message
+  # (A/B reproducibility), real/off → actual model output. Override with
+  # --use-model-reply-in-next-turn {true,false}.
+  simulate-default:
+    # Research-based realistic agent simulation
+    think_time: [2.0, 1.0]     # LogNormal median ~7.4s (Blenn & Van Mieghem 2016; TPC-W avg 7s; Mah 1997)
+    tool_delay: true            # Bimodal: 70% Exp(0.3s), 30% LogNormal(0.7,0.8) (fit to Continuum Table 1 mean 925ms)
+    max_retries: 3              # Exp backoff + jitter (OpenAI Cookbook: 6, Anthropic SDK: 2; 3 is midpoint)
+    max_tokens: 1024            # Cap; SWE-bench trajectory avg ~340 tok/call, 1024 = upper bound
+    arrival_pattern: "gamma"        # Bursty arrivals (ServeGen 2505.09999, CV>1)
+    interruption_rate: 0.12         # No empirical data; sensitivity sweep [0.05, 0.25] recommended
+    single_turn_ratio: 0.0          # 0 by default; general chat: ~54% (ATC'25), ~59% (WildChat) - much lower for agents
+  simulate-production:
+    # Production cloud trace (KVCache in the Wild, ATC'25, arXiv:2506.02634)
+    think_time: [2.3, 1.5]         # LogNormal median ~10s, mean ~30s (engineering estimate, no paper source)
+    tool_delay: false               # Production mix is mostly chat, not agent
+    max_retries: 1                  # Light retry (standard practice)
+    max_tokens: 512                 # Conservative cap (ATC'25 §3.5: mean 973 single, 5953 multi tok)
+    arrival_pattern: "gamma"        # Bursty production arrival (ServeGen CV>1)
+    interruption_rate: 0
+    single_turn_ratio: 0
+  simulate-openhands:
+    # OpenHands CodeAct agent (arXiv:2506.18824: mean 29 iters, arXiv:2509.09853: 897K input)
+    # NOTE: openhands trace replay produces 1-token (EOS) responses because the model
+    # receives tool outputs without tool definitions. Use for serving load measurement
+    # only. For dataset generation, use task sources (swe-bench-verified, abc-bench, etc.).
+    think_time: [2.0, 1.0]         # LogNormal inter-turn, median ~7.4s (tool exec + orchestrator)
+    tool_delay: true                # Bimodal (fit to Continuum Table 1: mean tool exec 925ms)
+    max_retries: 3                  # Exp backoff + jitter
+    max_tokens: 1024               # Agent-scale output (SWE-Effi 2509.09853)
+    arrival_pattern: "gamma"        # Bursty arrivals (ServeGen 2505.09999, CV>1)
+    interruption_rate: 0
+    single_turn_ratio: 0
+  simulate-swe-agent:
+    # SWE-agent ReAct (SWE-Effi Table 2: 29-36 calls, 193K input for Llama-70B)
+    think_time: [2.0, 0.8]         # Shorter inter-turn - structured search-locate-fix pattern
+    tool_delay: true                # ReAct: nearly every turn has tool execution
+    max_retries: 1                  # Light retry
+    max_tokens: 512                 # SWE-Effi: ~110 output tok/call
+    arrival_pattern: "gamma"        # Bursty arrivals (ServeGen CV>1)
+    interruption_rate: 0
+    single_turn_ratio: 0
+
+  # ─── agent-* : Calibrated agent workload profiles ───
+  # Source: Continuum (OSDI'25), KVCache-Wild (ATC'25), SWE-bench, FuseSearch
+  agent-light:
+    # 6-11 turns, p50=2K input/turn, total ~30K-100K tokens
+    # SWE-bench verified + Continuum short-horizon agents
+    # Requires: vLLM --max-model-len >= 65536 (32768 overflows at turn 10+)
+    think_time: [2.0, 1.0]         # LogNormal median ~7s (orchestrator + tool wait)
+    tool_delay: true                # Continuum Table 1: mean 925ms, SD 3,550ms
+    max_retries: 3
+    max_tokens: 4096                # p90 output ~2K (Continuum), raised to 4K to avoid truncation on swe-evo (max ~3.2K)
+    arrival_pattern: "gamma"        # Agent arrivals are bursty (BurstGPT KDD'25: CV>1; ServeGen)
+    interruption_rate: 0
+    single_turn_ratio: 0
+    # Recommended CLI: --n-sessions 100   (server needs --max-model-len >= 65536)
+  agent-heavy:
+    # 15-60 turns, p50=8K input/turn, total 70K-100K+ tokens
+    # OpenHands CodeAct, FuseSearch multi-agent, deep SWE-bench trajectories
+    # Requires: vLLM --max-model-len >= 131072 (65536 overflows at turn 25+)
+    think_time: [2.5, 1.2]         # LogNormal median ~12s (longer tool chains)
+    tool_delay: true                # Continuum: mean 1,923ms for heavy agents
+    max_retries: 3
+    max_tokens: 16384               # Heavy agents: featurebench p95=12K, swe-evo max=3.2K. 16K covers p99+.
+    arrival_pattern: "gamma"        # Bursty: multi-agent fan-out (ServeGen CV>1)
+    interruption_rate: 0.05         # Occasional cancellation on long runs
+    single_turn_ratio: 0
+    # Recommended CLI: --n-sessions 50   (server needs --max-model-len >= 131072)
+
+  # ─── measure-* : Calibrated end-to-end measurement ───
+  measure-agent-light:
+    # SWE-bench, short-horizon agents. 6-11 turns, p50=2K input/turn.
+    think_time: [2.0, 1.0]         # LogNormal median ~7s (Continuum)
+    tool_delay: true                # Continuum: mean 925ms, SD 3,550ms
+    max_retries: 3
+    max_tokens: 32768               # Uncapped for measurement
+    arrival_pattern: "gamma"        # Agent arrivals are bursty (BurstGPT KDD'25: CV>1)
+    interruption_rate: 0
+    single_turn_ratio: 0
+    # Recommended: --n-turns 8 --synthetic-tokens-per-turn 2048
+  measure-agent-heavy:
+    # OpenHands, FuseSearch, deep SWE-bench. 15-60 turns, p50=8K input/turn.
+    think_time: [2.5, 1.2]         # LogNormal median ~12s (longer tool chains)
+    tool_delay: true                # Continuum: mean 1,923ms for heavy agents
+    max_retries: 3
+    max_tokens: 32768
+    arrival_pattern: "gamma"        # Bursty fan-out (ServeGen CV>1)
+    interruption_rate: 0.05
+    single_turn_ratio: 0
+    # Recommended: --n-turns 25 --synthetic-tokens-per-turn 8192
+  # "measure" is a code-level alias for "measure-agent-heavy" (see preset.py).
+
+# ── Calibration overrides ─────────────────────────────────────────────────
+# Override assumed/estimated values with measured data.
+# Any value set here takes precedence over code defaults.
+# Override assumed values with measured data from your benchmark runs.
+calibration:
+  # Override assumed values with measured data. Only active (uncommented) keys take effect.
+
+  # -- Hardware prefill calibration --
+  # Set prefill_calibration to "measured" when using real data.
+
+lmcache:
+  url: "http://localhost:9003/metrics"  # LMCache metrics endpoint
+  enabled: false
+
+models: {}
+  # Add your model configurations here. Example:
+  # my-model:
+  #   display_name: "My Model"
+  #   max_model_len: 16384
+  #   num_hidden_layers: 36
+  #   num_attention_heads: 64
+  #   num_key_value_heads: 8
+  #   head_dim: 64
+  #   kv_dtype_bytes: 2
+  #   tp_size: 8
+  #   num_gpus: 8
+  #   hbm_per_gpu_gb: 64.0

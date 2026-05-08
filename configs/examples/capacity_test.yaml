@@ -1,0 +1,20 @@
+# Capacity cliff detection configuration
+# Sweeps session count to find the server's capacity limit.
+#
+# Usage:
+#   agentsurge sweep --slo-ms 3000 --config configs/examples/capacity_test.yaml
+
+vllm:
+  url: "http://localhost:8000"
+  model: "meta-llama/Llama-3.1-8B-Instruct"
+  timeout: 600
+
+workload:
+  n_turns: 7
+  synthetic_tokens_per_turn: 2048
+  ttft_threshold: 3000
+
+runner:
+  max_concurrency: 100
+  max_tokens: 256
+  arrival_pattern: "burst"
